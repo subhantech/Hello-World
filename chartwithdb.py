@@ -16,14 +16,17 @@ from datetime import datetime, timedelta
 from tkcalendar import Calendar, DateEntry
 import matplotlib.ticker as ticker
 import matplotlib.pyplot as plt
-# from numba import jit
 import threading
 from joblib import Parallel, delayed ## need to work on this for speed processing.
 import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
 import asyncio
 import json
+from tkinter import messagebox
 import redis
+import awesometkinter as atk
+import subprocess
+from detectCSpatterns import get_filtered_patterns
 
 
 ### Dont download data with yahoo finance always.. got blocked by that.. use the button to download only missing data. download historical data should have more options
@@ -97,8 +100,8 @@ conn.commit()
 samie_style = {
         "base_mpl_style": "nightclouds",
         "marketcolors": {
-            "candle": {"up": "#ffffff", "down": "#ef4f60"},  
-            "edge": {"up": "#000000", "down": "#ef4f60"},  
+            "candle": {"up": "#00ca73", "down": "#ff6960"},  
+            "edge": {"up": "#000000", "down": "#000000"},  
             "wick": {"up": "#247252", "down": "#ef4f60"},  
             "ohlc": {"up": "green", "down": "red"},
             "volume": {"up": "#067887", "down": "#ff6060"},  
@@ -130,70 +133,60 @@ samie_style_obj = mpf.make_mpf_style(**samie_style)
     
 
 
-try:
     
-    def fetch_data_from_db(symbol, selected_period):
+def fetch_data_from_db(symbol, selected_period):
         # Convert selected_period to days
-        if selected_period == '5d':
-            period_days = 5
-        elif selected_period == '1mo':
-            months = 1
-            period_days = months * 30
-        elif selected_period == '3mo':
-            months = 3
-            period_days = months * 30
-        elif selected_period == '6mo':
-            months = 6
-            period_days = months * 30
-        elif selected_period == '1y':
-            years = 1
-            period_days = years * 365
-        elif selected_period == '2y':
-            years = 2
-            period_days = years * 365
-        elif selected_period == '3y':
-            years = 3
-            period_days = years * 365
-        elif selected_period == '4y':
-            years = 4
-            period_days = years * 365
-        elif selected_period == '5y':
-            years = 5
-            period_days = years * 365
-        elif selected_period == '6y':
-            years = 6
-            period_days = years * 365
-        elif selected_period == '7y':
-            years = 7
-            period_days = years * 365
-        elif selected_period == '8y':
-            years = 8
-            period_days = years * 365
-        elif selected_period == '9y':
-            years = 9
-            period_days = years * 365
-        elif selected_period == '10y':
-            years = 10
-            period_days = years * 365
-        else:
-            raise ValueError("Invalid period format")
-
+        period_days = convert_period_to_days(selected_period)
         # Calculate the start date for the data
         end_date = datetime.now().date()
         start_date = end_date - timedelta(days=period_days)
 
+        try:
         # Check if data exists for the entire period
-        cur.execute("SELECT COUNT(*) FROM daily_prices WHERE symbol = %s AND date >= %s AND date <= %s", (symbol, start_date, end_date))
-        data_count = cur.fetchone()[0]
-        expected_data_points = period_days + 1  # Include the end date
+            cur.execute("SELECT COUNT(*) FROM daily_prices WHERE symbol = %s AND date >= %s AND date <= %s", (symbol, start_date, end_date))
+            data_count = cur.fetchone()[0]
+            expected_data_points = period_days + 1  # Include the end date
 
-        if data_count == expected_data_points:
-            print(f"All data available for {symbol} for the past {selected_period}")
-            return
-except Exception as e:
-    print(f"An error occured: {e}")
-    conn.rollback()
+            if data_count == expected_data_points:
+                print(f"All data available for {symbol} for the past {selected_period}")
+                return
+        except Exception as e:
+            print(f"An error occured: {e}")
+            conn.rollback()
+    # Fetch the data from the database
 
+def convert_period_to_days(selected_period):
+    if selected_period == '5d':
+        return 5
+    elif selected_period == '1mo':
+        return 30
+    elif selected_period == '3mo':
+        return 90
+    elif selected_period == '6mo':
+        return 180
+    elif selected_period == '1y':
+        return 365
+    elif selected_period == '2y':
+        return 730
+    elif selected_period == '3y':
+        return 1095
+    elif selected_period == '4y':
+        return 1460
+    elif selected_period == '5y':
+        return 1825
+    elif selected_period == '6y':
+        return 2190
+    elif selected_period == '7y':
+        return 2555
+    elif selected_period == '8y':
+        return 2920
+    elif selected_period == '9y':
+        return 3285
+    elif selected_period == '10y':
+        return 3650
+    else:
+        raise ValueError("Invalid period format")
+    
 def volume_formatter(x, pos):
     return f'{x:,.0f}'
 
@@ -207,7 +200,10 @@ async def calculate_and_store_rsi(symbol):
 
     # Fetch the last calculated RSI date
     cur.execute("SELECT MAX(date) FROM daily_prices WHERE symbol = %s AND rsi3 IS NOT NULL", (symbol,))
-    last_rsi_date = cur.fetchone()[0]
+    # last_rsi_date = cur.fetchone()[0]
+    end_date = datetime.now().date()
+    last_rsi_date = end_date - timedelta(days=14)
+    
 
     # Fetch only new data
     cur.execute("SELECT date, close FROM daily_prices WHERE symbol = %s AND date > %s ORDER BY date", (symbol, last_rsi_date or '1900-01-01'))
@@ -275,12 +271,18 @@ async def calculate_and_store_ma(symbol):
     updates = []
     for date, row in df.iterrows():
         updates.append((
-            row['ma7'], row['ma21'], row['ma63'], row['ma189'],
-            row['mamix14'], row['mamix42'], row['vwma25'],
+            float(row['ma7']), 
+            float(row['ma21']), 
+            float(row['ma63']), 
+            float(row['ma189']),
+            float(row['mamix14']), 
+            float(row['mamix42']), 
+            float(row['vwma25']),
             symbol, date
         ))
         # Cache the data
         redis_client.set(f"{symbol}_{date}", json.dumps(row.to_dict()))
+
 
     # Perform bulk update
     await bulk_update(updates)
@@ -296,9 +298,13 @@ async def get_last_update(symbol):
 async def bulk_update(updates):
     cur.executemany("""
         UPDATE daily_prices
-        SET ma7 = COALESCE(%s, ma7), ma21 = COALESCE(%s, ma21), ma63 = COALESCE(%s, ma63), 
-            ma189 = COALESCE(%s, ma189), mamix14 = COALESCE(%s, mamix14), 
-            mamix42 = COALESCE(%s, mamix42), vwma25 = COALESCE(%s, vwma25)
+        SET ma7 = COALESCE(%s, ma7), 
+            ma21 = COALESCE(%s, ma21), 
+            ma63 = COALESCE(%s, ma63), 
+            ma189 = COALESCE(%s, ma189), 
+            mamix14 = COALESCE(%s, mamix14), 
+            mamix42 = COALESCE(%s, mamix42), 
+            vwma25 = COALESCE(%s, vwma25)
         WHERE symbol = %s AND date = %s
     """, updates)
     conn.commit()
@@ -332,12 +338,12 @@ def plot_daily_chart(symbol, selected_period):
     
     
 
-    cur.execute("SELECT date, open, high, low, close, volume, rsi3,  ma7, ma21, ma63, ma189, mamix14, mamix42, vwma25, traderule1, traderule2, traderule3, traderule4, traderule5  FROM daily_prices WHERE symbol = %s AND date >= NOW() - INTERVAL %s ORDER BY date", (symbol, sql_period))
+    cur.execute("SELECT date, open, high, low, close, volume, rsi3,  ma7, ma21, ma63, ma189, mamix14, mamix42, vwma25, traderule1, traderule2, traderule3, traderule4, traderule5, traderule6  FROM daily_prices WHERE symbol = %s AND date >= NOW() - INTERVAL %s ORDER BY date", (symbol, sql_period))
     
     rows = cur.fetchall()
     if not rows:
         fetch_data_from_db(symbol, selected_period)
-        cur.execute("SELECT date, open, high, low, close, volume, rsi3,  ma7, ma21, ma63, ma189, mamix14, mamix42, vwma25, traderule1, traderule2, traderule3, traderule4, traderule5  FROM daily_prices WHERE symbol = %s AND date >= NOW() - INTERVAL %s ORDER BY date", (symbol, sql_period))
+        cur.execute("SELECT date, open, high, low, close, volume, rsi3,  ma7, ma21, ma63, ma189, mamix14, mamix42, vwma25, traderule1, traderule2, traderule3, traderule4, traderule5, traderule6  FROM daily_prices WHERE symbol = %s AND date >= NOW() - INTERVAL %s ORDER BY date", (symbol, sql_period))
         rows = cur.fetchall()
     
     
@@ -361,7 +367,8 @@ def plot_daily_chart(symbol, selected_period):
         'traderule2':[row[15] for row in rows],
         'traderule3':[row[16] for row in rows],
         'traderule4':[row[17] for row in rows],
-        'traderule5':[row[18] for row in rows]
+        'traderule5':[row[18] for row in rows],
+        'traderule6':[row[19] for row in rows]
         
         
         
@@ -389,13 +396,16 @@ def plot_daily_chart(symbol, selected_period):
     else:
         latest_info = "No data available"
     
-
+    #these lines are highlighting the Low values in your DataFrame where each respective trading rule is met, 
+    # and setting the value to NaN where the rule is not met.
     ### to plot on low of the candle .. we are collecting lows
     df['traderule1_highlight'] = np.where(df['traderule1'], df['Low'], np.nan)
     df['traderule2_highlight'] = np.where(df['traderule2'], df['Low'], np.nan)
     df['traderule3_highlight'] = np.where(df['traderule3'], df['Low'], np.nan)
     df['traderule4_highlight'] = np.where(df['traderule4'], df['Low'], np.nan)
     df['traderule5_highlight'] = np.where(df['traderule5'], df['Low'], np.nan)
+    df['traderule6_highlight'] = np.where(df['traderule6'], df['Low'], np.nan)
+    
     # df['traderule3_highlight'] = np.where(df['traderule3'], df['Low'] * 1.05, np.nan) # to add 5%
     # df['traderule3_highlight'] = np.where(df['traderule3'], df['Low'] * 0.95, np.nan) # to minus 5%
     
@@ -414,6 +424,13 @@ def plot_daily_chart(symbol, selected_period):
     traderule5_high = df['traderule5_high'].dropna()
     traderule5_low = df['traderule5_low'].dropna()
     
+    # I am collecting the high and low values of traderules only if more than one rule is met. To plot lines below.
+    
+    df['highlight_high'] = np.where((df[['traderule1', 'traderule2', 'traderule3', 'traderule4', 'traderule5', 'traderule6']].sum(axis=1) > 1), df['High'], np.nan)
+    df['highlight_low'] = np.where((df[['traderule1', 'traderule2', 'traderule3', 'traderule4', 'traderule5', 'traderule6']].sum(axis=1) > 1), df['Low'], np.nan)
+    
+    highlight_high_values = df['highlight_high'].dropna()
+    highlight_low_values = df['highlight_low'].dropna()
     
     # if not traderule3_high.empty:
     #     addplot = []
@@ -441,6 +458,7 @@ def plot_daily_chart(symbol, selected_period):
         mpf.make_addplot(df['traderule3_highlight'], ax=ax1,  type='scatter', markersize=100, marker='s', color='#7572f1'), # working code
         mpf.make_addplot(df['traderule4_highlight'], ax=ax1, type='scatter', markersize=100, marker='d', color='#ff00ff'),  # New color for traderule4
         mpf.make_addplot(df['traderule5_highlight'], ax=ax1, type='scatter', markersize=100, marker='^', color='#067887'),  # New color for traderule4
+        mpf.make_addplot(df['traderule6_highlight'], ax=ax1, type='scatter', markersize=100, marker='^', color='#007117'),  # New color for traderule4
         # mpf.make_addplot([horizontal_line]*len(df), ax=ax1, color='#7572f1', linestyle='--') working code for only one time occurance
 
     ]
@@ -449,7 +467,7 @@ def plot_daily_chart(symbol, selected_period):
     
     #mpf.plot(df, hlines=['traderule3_high'], type='candle')
     # mpf.plot(df, type='candle', style=samie_style_obj, ax=ax1, volume=ax2, datetime_format='%b %d', addplot=addplot) # working code
-    mpf.plot(df, type='candle', style=samie_style_obj, ax=ax1, volume=ax2, datetime_format='%Y-%m-%d', addplot=addplot, returnfig=True,  edgecolor='#654321',)
+    mpf.plot(df, type='candle', style=samie_style_obj, ax=ax1, volume=ax2, datetime_format='%Y-%m-%d', addplot=addplot, returnfig=True)
     
     ###########/////////////////////// Fix this code ///////////////#######################
     # Define a custom tooltip function
@@ -478,50 +496,74 @@ def plot_daily_chart(symbol, selected_period):
 
     ax1.set_title(f' ({selected_period}) :  {latest_info}', loc='left',  fontsize=10, color='dodgerblue')
     ax1.set_ylabel('Price')
-    ax1.grid(axis='both', which='both', linestyle='--', linewidth=0.5, color='#F1EFEF')
+    ax1.grid(axis='both', which='both', linestyle='-.', linewidth=0.3, color='#a1b2c3')
+    # Enhanced Gridlines for ax1 (Price Chart)
+    # ax1.grid(True, which='both', linestyle='--', linewidth=0.5, color='gray')  # Major and minor grids for ax1
+    
     data_range = df['Close'].max() - df['Close'].min()
     # tick_interval = data_range * 0.05  # 5% of the data range
+    
+    def round_to_nearest_five_paisa(value):
+        rounded_value = round(value * 20) / 20.0
+        return rounded_value
+
+    # data_range = 1.23  # Replace with your actual data range
+    # tick_interval = data_range * 0.10
+    # rounded_tick_interval = round_to_nearest_five_cents(tick_interval)
+    # print(rounded_tick_interval)
+
     tick_interval = data_range * 0.10  # 10% of the data range
+    rounded_tick_interval = round_to_nearest_five_paisa(tick_interval)
     
     # Set y-axis major ticks at every 5% of the data range
-    ax1.yaxis.set_major_locator(ticker.MultipleLocator(tick_interval))
+    ax1.yaxis.set_major_locator(ticker.MultipleLocator(rounded_tick_interval))
     # ax1.set_ylim([df['Low'].min(), df['High'].max()])  # working code.. sets you graph to max and min values
     
     # Set the title on the primary axes to include the symbol name
     # ax1.set_title(f'{symbol} Stock Price ({selected_period})', loc='center', fontsize=16, fontweight='bold')
     fig.suptitle(f'{symbol}', fontsize=14, y=0.98, color='#ff000f')  # Adjust the y position as needed
     fig.text(0.99, 0.95, 'MashaAllah', fontsize=10, ha='right', color='green')
-    # Enhanced Gridlines for ax1 (Price Chart)
-    ax1.grid(True, which='both', linestyle='--', linewidth=0.5, color='gray')  # Major and minor grids for ax1
-    ############ working code for line below.
-    if not traderule3_high.empty:
-        for value in traderule3_high:
-            ax1.axhline(y=value, color='#7572f1', linestyle=':')	
+    ############ working code for line below for drawing lines.. dont delete.
     
-    if not traderule3_low.empty:
-        # for value in traderule3_low:                                              ### working code
-        #     ax1.axhline(y=value * 0.95, color='#ff000f', linestyle='--')          ### working code
-        for value  in traderule3_low:
-            ax1.axhline(y=value * 0.98, color='#ff000f', linestyle=':')
-            ax1.text(df.index[-1], value * 0.98, f'{value:.2f}', va='center', ha='left', 
-                bbox=dict(facecolor='#0042a1', edgecolor='black', alpha=0.7, boxstyle='round,pad=0.5'))
+    # if not traderule3_high.empty:
+    #     for value in traderule3_high:
+    #         ax1.axhline(y=value, color='#7572f1', linestyle=':')	
+    
+    # if not traderule3_low.empty:
+    #     # for value in traderule3_low:                                              ### working code
+    #     #     ax1.axhline(y=value * 0.95, color='#ff000f', linestyle='--')          ### working code
+    #     for value  in traderule3_low:
+    #         ax1.axhline(y=value * 0.98, color='#ff000f', linestyle=':')
+    #         ax1.text(df.index[-1], value * 0.98, f'{value:.2f}', va='center', ha='left', 
+    #             bbox=dict(facecolor='#0042a1', edgecolor='black', alpha=0.7, boxstyle='round,pad=0.5'))
                 
-    if not traderule4_high.empty:
-        for value in traderule4_high:
-            ax1.axhline(y=value, color='#abcddcba', linestyle='--')
+    # if not traderule4_high.empty:
+    #     for value in traderule4_high:
+    #         ax1.axhline(y=value, color='#abcddcba', linestyle='--')
     
-    if not traderule4_low.empty:
-        # for value in traderule3_low:                                              ### working code
-        #     ax1.axhline(y=value * 0.95, color='#fabfab', linestyle='--')          ### working code
-        for value  in traderule4_low:
-            ax1.axhline(y=value * 0.98, color='#fabcfabc', linestyle='--')
-            ax1.text(df.index[-1], value * 0.98, f'{value:.2f}', va='center', ha='left', 
-                bbox=dict(facecolor='#0042a1', edgecolor='black', alpha=0.7))
+    # if not traderule4_low.empty:
+    #     # for value in traderule4_low:                                              ### working code
+    #     #     ax1.axhline(y=value * 0.95, color='#fabfab', linestyle='--')          ### working code
+    #     for value  in traderule4_low:
+    #         ax1.axhline(y=value * 0.98, color='#fabcfabc', linestyle='--')
+    #         ax1.text(df.index[-1], value * 0.98, f'{value:.2f}', va='center', ha='left', 
+    #             bbox=dict(facecolor='#7572f1', edgecolor='black', alpha=0.7))
                 
 
     # ax1.set_yscale('log')   
     # ax1.yaxis.set_major_formatter(ticker.FuncFormatter(lambda x, p: f'{x:.2f}'))
     # ax1.yaxis.set_major_formatter(ticker.FuncFormatter(price_formatter))
+    ############################################################################################
+    
+    if not highlight_high_values.empty:
+        for value in highlight_high_values:
+            ax1.axhline(y=value, color='#0042a1', linestyle='--', linewidth=1)	
+    
+    if not highlight_low_values.empty:
+        for value in highlight_low_values:
+            ax1.axhline(y=value * 0.95, color='#ff000f', linestyle='--', linewidth=1)          ### working code
+    
+    
     # # Volume Chart
     # # Plot the volume chart on ax2
     ax2.set_title('  Volume', loc='left',  fontsize=10, pad=5)
@@ -531,7 +573,7 @@ def plot_daily_chart(symbol, selected_period):
     ax2.yaxis.set_major_formatter(ticker.FuncFormatter(volume_formatter))
         
     # Enhanced Gridlines for ax2 (Volume Chart)
-    ax2.grid(True, which='both', linestyle='--', linewidth=0.5, color='gray')  # Major and minor grids for ax2
+    ax2.grid(axis='both', which='both', linestyle='-.', linewidth=0.3, color='#a1b2c3')  # Major and minor grids for ax2
 
     ax1.set_position([0.1, 0.3, 0.8, 0.6])  # Adjust position to make main chart larger
     ax2.set_position([0.1, 0.1, 0.8, 0.2])  # Adjust position to make volume chart smaller
@@ -548,8 +590,8 @@ def plot_daily_chart(symbol, selected_period):
     ax2.xaxis.set_major_locator(ticker.MultipleLocator(10))
 
     # Initialize the crosshair lines
-    crosshair_v = ax1.axvline(x=0, color='#074173', linestyle='--')
-    crosshair_h = ax1.axhline(y=0, color='#074173', linestyle='--')
+    crosshair_v = ax1.axvline(x=0, color='#074173', linestyle=':')
+    crosshair_h = ax1.axhline(y=0, color='#074173', linestyle=':')
 
     # Function to update the crosshair position
     def update_crosshair(event):
@@ -912,7 +954,7 @@ def on_select(event):
     if watchlist.curselection():
         selected_symbol = watchlist.get(watchlist.curselection())
         selected_period = period_var.get()
-        fetch_data_from_db(selected_symbol, selected_period)
+        # fetch_data_from_db(selected_symbol, selected_period)
         selected_timeframe = timeframe_var.get()
         if selected_timeframe == "Daily":
             plot_daily_chart(selected_symbol, selected_period)
@@ -924,16 +966,16 @@ def on_select(event):
 
 async def update_traderules(symbol):
     cur.execute("""
-        SELECT date, open, high, low, close, rsi3, mamix14, mamix42, 
-               traderule1, traderule2, traderule3, traderule4, traderule5 
+        SELECT date, open, high, low, close, rsi3, mamix14, mamix42, vwma25,
+               traderule1, traderule2, traderule3, traderule4, traderule5, traderule6 
         FROM daily_prices 
         WHERE symbol = %s 
         ORDER BY date
     """, (symbol,))
     rows = cur.fetchall()
     
-    df = pd.DataFrame(rows, columns=['date', 'open', 'high', 'low', 'close', 'rsi3', 'mamix14', 'mamix42', 
-                                     'traderule1', 'traderule2', 'traderule3', 'traderule4', 'traderule5'])
+    df = pd.DataFrame(rows, columns=['date', 'open', 'high', 'low', 'close', 'rsi3', 'mamix14', 'mamix42', 'vwma25',
+                                     'traderule1', 'traderule2', 'traderule3', 'traderule4', 'traderule5', 'traderule6'])
     df.set_index('date', inplace=True)
     df = df.fillna(value=np.nan)
 
@@ -972,13 +1014,22 @@ async def update_traderules(symbol):
                        (df['close'].shift(1).le(df['mamix14'].shift(1))) & \
                        (df['close'].gt(df['mamix42'])) & \
                        (df['close'].shift(1).le(df['mamix42'].shift(1)))
+    
+    # Calculate traderule6
+    df['new_traderule6'] = (df['close'].shift(1) < df['open'].shift(1)) & \
+                        (df['close'] > df['open']) & \
+                        (df['open'] > df['close'].shift(1)) & \
+                        (df['close'] < df['open'].shift(1)) & \
+                        (df['close'] / df['open'] < 1.002) & \
+                        (df['close'] < df['vwma25'] * 1.01)
                        
     # Find rows where traderules have changed
     changed_rows = df[(df['traderule1'] != df['new_traderule1']) | 
                       (df['traderule2'] != df['new_traderule2']) |
                       (df['traderule3'] != df['new_traderule3']) |
                       (df['traderule4'] != df['new_traderule4']) |
-                      (df['traderule5'] != df['new_traderule5'])]
+                      (df['traderule5'] != df['new_traderule5']) |
+                      (df['traderule6'] != df['new_traderule6'])]
 
     # Prepare batch updates
     updates = [(bool(row['new_traderule1']), 
@@ -986,12 +1037,13 @@ async def update_traderules(symbol):
                 bool(row['new_traderule3']),
                 bool(row['new_traderule4']),
                 bool(row['new_traderule5']),
+                bool(row['new_traderule6']),
                 symbol, row.name) for _, row in changed_rows.iterrows()]
 
     # Perform bulk update
     cur.executemany("""
         UPDATE daily_prices 
-        SET traderule1 = %s, traderule2 = %s, traderule3 = %s, traderule4 = %s, traderule5 = %s
+        SET traderule1 = %s, traderule2 = %s, traderule3 = %s, traderule4 = %s, traderule5 = %s, traderule6 = %s
         WHERE symbol = %s AND date = %s
     """, updates)
     
@@ -1019,19 +1071,18 @@ def download_histdata(start_date, end_date):
         print(f"No data available for {selected_symbol} between {start_date} and {end_date}")
         return
 
-    # Prepare data for bulk insert
+# Prepare data for bulk insert
     data_to_insert = []
     for index, row in stock_hist_data.iterrows():
         data_to_insert.append((
             selected_symbol,
             index.date(),
-            row['Open'],
-            row['High'],
-            row['Low'],
-            row['Close'],
-            row['Volume']
+            float(row['Open']),
+            float(row['High']),
+            float(row['Low']),
+            float(row['Close']),
+            int(row['Volume'])
         ))
-
     # Bulk insert/update
     try:
         cur.executemany("""
@@ -1052,48 +1103,62 @@ def download_histdata(start_date, end_date):
 
     
 def download_last_3_days_histdata():
-    # Get the list of symbols from the database
-    cur.execute("SELECT symbol FROM tickers")
-    symbols = [row[0] for row in cur.fetchall()]
     
     # Calculate the start date for the last 3 days
     end_date = datetime.now().date()
     start_date = end_date - timedelta(days=3)
     
     # Download the historical data for each symbol and update the database
-    for symbol in symbols:
-        stock_hist_data = yf.download(symbol, start=start_date, end=end_date)
-        # print(stock_hist_data)
-        
-        # Define the column mapping
-        column_mapping = {
-            'symbol': 'symbol',
-            'date': 'Date',
-            'open': 'Open',
-            'high': 'High',
-            'low': 'Low',
-            'close': 'Close',
-            'volume': 'Volume'
-        }
 
-        # Insert the data into the database
-        for index, row in stock_hist_data.iterrows():
-            data = {
-                'symbol': symbol,
-                'date': index.date(),
-                'open': row['Open'],
-                'high': row['High'],
-                'low': row['Low'],
-                'close': row['Close'],
-                'volume': row['Volume']
-            }
-            try: 
-                cur.execute( 
-                        "INSERT INTO daily_prices (symbol, date, open, high, low, close, volume) VALUES (%s, %s, %s, %s, %s, %s, %s) ON CONFLICT (symbol, date) DO UPDATE SET open = excluded.open, high = excluded.high, low = excluded.low, close = excluded.close, volume = excluded.volume RETURNING *",
-                        (data['symbol'], data['date'], data['open'], data['high'], data['low'], data['close'], data['volume']))
-                conn.commit()
-            except Exception as e:
-                print(f"Error downloading data for symbol {symbol}: {e}")
+    # Fetch symbols from the database
+    cur.execute("SELECT symbol FROM tickers")
+    symbols = [row[0] for row in cur.fetchall()]
+    symbols.sort()
+
+    # Check data availability for the first 3 symbols
+    available_symbols = []
+    for symbol in symbols[:3]:
+        stock_hist_data = yf.download(symbol, start=start_date, end=end_date)
+        if not stock_hist_data.empty:
+            available_symbols.append(symbol)
+
+    # If data is available for at least 3 symbols, fetch data for all symbols
+    if len(available_symbols) >= 3:
+        for symbol in symbols:
+            stock_hist_data = yf.download(symbol, start=start_date, end=end_date)
+            
+            if stock_hist_data.empty:
+                print(f"No data available for symbol {symbol}")
+                continue
+            
+            # Insert the data into the database
+            for index, row in stock_hist_data.iterrows():
+                data = {
+                    'symbol': symbol,
+                    'date': index.date(),
+                    'open': row['Open'],
+                    'high': row['High'],
+                    'low': row['Low'],
+                    'close': row['Close'],
+                    'volume': row['Volume']
+                }
+                try:
+                    cur.execute("""
+                        INSERT INTO daily_prices (symbol, date, open, high, low, close, volume)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (symbol, date) DO NOTHING
+                    """, (
+                        symbol,
+                        row.name.date(),
+                        float(row['Open']),
+                        float(row['High']),
+                        float(row['Low']),
+                        float(row['Close']),
+                        int(row['Volume'])
+                    ))
+                    conn.commit()
+                except Exception as e:
+                    print(f"Error downloading data for symbol {symbol}: {e}")
 #################################### All Rules update section ####################################                
 def update_Screensers_thread():
     threading.Thread(target=update_Screeners, daemon=True).start()
@@ -1118,12 +1183,74 @@ def update_progress(progress):
     progress_bar['value'] = progress
     root.update_idletasks()
 ##################################################################
-def up2date_chart(selected_symbol):   # updates only selected symbol
-    selected_symbol = watchlist.get(watchlist.curselection())
-    asyncio.run(calculate_and_store_rsi(selected_symbol))
-    asyncio.run(calculate_and_store_ma(selected_symbol))
-    asyncio.run(update_traderules(selected_symbol))
-    
+def detect_cspatterns():
+    try:
+        filtered_patterns = get_filtered_patterns()
+
+        # Create a popup window with a table to display the results
+        popup = tk.Toplevel()
+        popup.title("CSpatterns Detection Results")
+
+        # Create a table to display the results
+        table = ttk.Treeview(popup)
+        table['columns'] = tuple(filtered_patterns.columns)
+
+        # Format the table columns
+        table.column("#0", width=0, stretch=tk.NO)
+        for col in filtered_patterns.columns:
+            table.column(col, anchor=tk.W, width=100)
+            table.heading(col, text=col, anchor=tk.W)
+
+        # Insert data into the table
+        for index, row in filtered_patterns.iterrows():
+            values = [('✅' if v == True else ' ' if v == False else v) for v in row]
+            table.insert('', 'end', values=values)
+
+        # Pack the table
+        table.pack(fill=tk.BOTH, expand=True)
+
+        # Make the popup window visible
+        popup.mainloop()
+
+    except Exception as e:
+        print(f"An error occurred: {e}")
+
+
+
+###########################################################################################
+def up2date_chart():
+    try:
+        selected_symbol = watchlist.get(watchlist.curselection())
+    except tk.TclError:
+        messagebox.showerror("Selection Error", "No symbol selected.")
+        return
+
+    async def update_tasks(symbol):
+        await asyncio.gather(
+            calculate_and_store_rsi(symbol),
+            calculate_and_store_ma(symbol),
+            update_traderules(symbol)
+        )
+
+    def run_async_tasks():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(update_tasks(selected_symbol))
+        loop.close()
+
+    threading.Thread(target=run_async_tasks, daemon=True).start()
+
+async def update_everything():
+    cur.execute("SELECT symbol FROM tickers")
+    symbols = cur.fetchall()
+    # Sort the symbols in ascending order
+    symbols.sort()
+    for symbol in symbols:
+            await calculate_and_store_rsi(symbol),
+            await calculate_and_store_ma(symbol),
+            await update_traderules(symbol)
+        
+        
 def show_recent_signals():
     popup = tk.Toplevel()
     popup.title("Recent Signals")
@@ -1159,7 +1286,7 @@ def show_recent_signals():
     )
 
     # Create a treeview to display the data
-    tree = ttk.Treeview(popup, columns=("Date", "Symbol", "Rule2", "Rule3", "Rule4", "Rule5"), show="headings", height=10)
+    tree = ttk.Treeview(popup, columns=("Date", "Symbol", "Rule2", "Rule3", "Rule4", "Rule5", "Rule6"), show="headings", height=10)
     
     # Set column widths and alignment
     tree.column("Date", width=100, anchor='center')
@@ -1168,6 +1295,7 @@ def show_recent_signals():
     tree.column("Rule3", width=100, anchor='center')
     tree.column("Rule4", width=100, anchor='center')
     tree.column("Rule5", width=100, anchor='center')
+    tree.column("Rule6", width=100, anchor='center')
 
     tree.heading("Date", text="Date")
     tree.heading("Symbol", text="Symbol")
@@ -1175,32 +1303,36 @@ def show_recent_signals():
     tree.heading("Rule3", text="Rule 3")
     tree.heading("Rule4", text="Rule 4")
     tree.heading("Rule5", text="Rule 5")
+    tree.heading("Rule6", text="Rule 6")
     
     # Fetch data from the database
-    three_days_ago = (datetime.now() - timedelta(days=3)).strftime('%Y-%m-%d')
+    days_ago = (datetime.now() - timedelta(days=5)).strftime('%Y-%m-%d')
     
     query = """
     SELECT date, symbol, 
             BOOL_OR(traderule2) AS traderule2, 
             BOOL_OR(traderule3) AS traderule3, 
             BOOL_OR(traderule4) AS traderule4,
-            BOOL_OR(traderule5) AS traderule5
+            BOOL_OR(traderule5) AS traderule5,
+            BOOL_OR(traderule6) AS traderule6
+
     FROM daily_prices
-    WHERE date >= %s AND (traderule2 OR traderule3 OR traderule4 OR traderule5)
+    WHERE date >= %s AND (traderule2 OR traderule3 OR traderule4 OR traderule5 OR traderule6)
     GROUP BY date, symbol
     """
-    cur.execute(query, (three_days_ago,))
-    results = cur.fetchall()
+    cur.execute(query, (days_ago,))
+    # results = cur.fetchall()
+    results = sorted(cur.fetchall(), reverse=True)
     
     # Define a tag for highlighting
     tree.tag_configure('highlight', background="#fDf3fD")
 
     # Populate the treeview
     for row in results:
-        date, symbol, rule2, rule3, rule4, rule5 = row
+        date, symbol, rule2, rule3, rule4, rule5, rule6 = row
             # Convert symbol to sentence case
         # symbol_sentence_case = symbol.capitalize() #works
-        values = (date, symbol, "✅" if rule2 else " ", "✅" if rule3 else " ", "✅" if rule4 else " ", "✅" if rule5 else " ")
+        values = (date, symbol, "✅" if rule2 else " ", "✅" if rule3 else " ", "✅" if rule4 else " ", "✅" if rule5 else " ", "✅" if rule6 else " ")
         item = tree.insert("", "end", values=values)
         # # Check if any rule is True and apply the highlight tag to the entire row if so
         # if any(values[2:]):  # Assuming the first two columns are date and symbol, and the rest are boolean rules
@@ -1215,6 +1347,8 @@ def show_recent_signals():
             tree.item(item, tags=('BoldText', item))  # Apply to the fifth column (Rule4)
         if rule5:
             tree.item(item, tags=('BoldText', item))  # Apply to the sixth column (Rule5)
+        if rule6:
+            tree.item(item, tags=('BoldText', item))  # Apply to the sixth column (Rule6)
 
         tree.pack(expand=True, fill="both", padx=10, pady=10)
     
@@ -1330,17 +1464,31 @@ def open_diary_popup():
         # with conn.cursor() as cur:
             cur.execute("UPDATE daily_prices SET notes = NULL WHERE date = %s AND symbol = %s", (date, symbol))
             conn.commit()
-            # conn.close()
             messagebox.showinfo("Success", "Note deleted successfully!")
             view_previous_notes()  # Refresh the view
     traders_diary_popup.mainloop()
 #########################################################################################################################################
+def resize_figure(event):
+    # Get the dimensions of the main_frame
+    width = main_frame.winfo_width()
+    height = main_frame.winfo_height()
+    
+    # Convert dimensions to inches (assuming 100 dpi)
+    width_in = width / 100
+    height_in = height / 100
+    
+    # Update the figure size
+    fig.set_size_inches(width_in, height_in)
 
 ########################################################################################################################################################################    
 # Create the main window
 root = tk.Tk()
 root.title("Subhantech Stock Watchlist")
 root.geometry("1800x900")
+# root.config(background=atk.DEFAULT_COLOR)
+#### Theme Awesome Tkinter for progress bars 
+
+
 
 # Create a sidebar frame
 sidebar = tk.Frame(root, width=250, bg='dodgerblue')
@@ -1387,6 +1535,8 @@ search_entry.bind("<Return>", search_stocks)
 # Add items to the watchlist from the database
 cur.execute("SELECT symbol FROM tickers")
 symbols = cur.fetchall()
+# Sort the symbols in ascending order
+symbols.sort()
 for symbol in symbols:
     watchlist.insert(tk.END, symbol[0])
 
@@ -1475,8 +1625,7 @@ download_histdata_button.pack(side=tk.RIGHT, padx=10, pady=5)
 data_update_section = tk.Frame(sidebar, bg='dodgerblue')
 data_update_section.pack(fill=tk.Y)
 
-# Update the Download HistData button to use the start and end dates
-up2date_chart_button = tk.Button(data_update_section, text=" Update RSI, MA, and Traderules ", command=lambda: up2date_chart(symbol))
+up2date_chart_button = tk.Button(data_update_section, text=" Update RSI, MA, and Traderules ", command=up2date_chart)
 up2date_chart_button.pack(side=tk.RIGHT, padx=10, pady=5)
 
 #################################### Traders Section ########################################################
@@ -1499,6 +1648,8 @@ progress_bar.pack(side=tk.LEFT, padx=10, pady=5)
 
 
 # Create a main frame
+fig = Figure(figsize=(9, 6), dpi=100)
+
 main_frame = tk.Frame(root, bg='dodgerblue')
 main_frame.pack(expand=True, fill='both', side='right')
 
@@ -1538,9 +1689,14 @@ for option, value in timeframe_options.items():
 update_3days_data_button = tk.Button(timeframe_section, text="Price Up2date", command=lambda: download_last_3_days_histdata(), bg='orange')
 update_3days_data_button.pack(side=tk.RIGHT, padx=10, pady=5)
 
+detect_cspatterns_button = tk.Button(timeframe_section, text="Candle patterns", command=lambda: detect_cspatterns(), bg='orange')
+detect_cspatterns_button.pack(side=tk.RIGHT, padx=10, pady=5)
+
+update_everything_button = tk.Button(timeframe_section, text="Update Everything", command=lambda: asyncio.run(update_everything()), bg='darkorange')
+update_everything_button.pack(side=tk.RIGHT, padx=10, pady=5)
 
 # Create a Matplotlib figure and canvas
-fig = Figure(figsize=(8, 6), dpi=100)
+fig = Figure(figsize=(9, 6), dpi=100)
 canvas = FigureCanvasTkAgg(fig, master=main_frame)
 canvas.get_tk_widget().pack(expand=True, fill='both')
 
