@@ -165,20 +165,35 @@ def get_filtered_patterns():
                 three_line_strike[i] = True
 
         # Return a DataFrame with pattern detections
+        # patterns = pd.DataFrame({
+        #     'Date': df.index.strftime('%Y-%m-%d'),
+        #     'Symbol': df['Symbol'],
+        #     'MorningStar': morning_star,
+        #     'ThreeWhiteSoldiers': three_white_soldiers,
+        #     'BullishHarami': bullish_harami,
+        #     'RisingThreeMethods': rising_three_methods,
+        #     'ThreeInsideUp': three_inside_up,
+        #     'InvertedHammer': inverted_hammer,
+        #     'TasukiGap': tasuki_gap,
+        #     'MatHold': mat_hold,
+        #     'UpsideTasukiGap': upside_tasuki_gap,
+        #     'ThreeLineStrike': three_line_strike
+        # })
+        # When creating the patterns DataFrame, use the index directly
         patterns = pd.DataFrame({
-            'Date': df.index.strftime('%Y-%m-%d'),
-            'Symbol': df['Symbol'],
-            'MorningStar': morning_star,
-            'ThreeWhiteSoldiers': three_white_soldiers,
-            'BullishHarami': bullish_harami,
-            'RisingThreeMethods': rising_three_methods,
-            'ThreeInsideUp': three_inside_up,
-            'InvertedHammer': inverted_hammer,
-            'TasukiGap': tasuki_gap,
-            'MatHold': mat_hold,
-            'UpsideTasukiGap': upside_tasuki_gap,
-            'ThreeLineStrike': three_line_strike
-        })
+                'Symbol': df['Symbol'],
+                'MorningStar': morning_star,
+                'ThreeWhiteSoldiers': three_white_soldiers,
+                'BullishHarami': bullish_harami,
+                'RisingThreeMethods': rising_three_methods,
+                'ThreeInsideUp': three_inside_up,
+                'InvertedHammer': inverted_hammer,
+                'TasukiGap': tasuki_gap,
+                'MatHold': mat_hold,
+                'UpsideTasukiGap': upside_tasuki_gap,
+                'ThreeLineStrike': three_line_strike
+            }, index=df.index)
+
 
         return patterns
 
