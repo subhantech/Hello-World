@@ -16,36 +16,40 @@ import os
 
 import tkinter as tk
 from tkinter import ttk
-from tkinter import ttk, messagebox, filedialog, Listbox
+from tkinter import ttk, messagebox, filedialog, Listbox, Label, Message
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
+from matplotlib.lines import Line2D
+import matplotlib.ticker as ticker
+import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
+
+import matplotlib.cbook as cbook
+import matplotlib.dates as mdates
 import yfinance as yf
 import psycopg2
 import mplfinance as mpf
-import mplcursors
 from ta.momentum import RSIIndicator
+import mplcursors
 import numpy as np
-import matplotlib.cbook as cbook
-import matplotlib.dates as mdates
 from datetime import datetime, timedelta
 from tkcalendar import Calendar, DateEntry
-import matplotlib.ticker as ticker
-import matplotlib.pyplot as plt
 import threading
 from joblib import Parallel, delayed ## need to work on this for speed processing.
-import matplotlib.pyplot as plt
-from matplotlib.figure import Figure
 import asyncio
 import json
 import redis
 import pygame
+import random
+import html
 import subprocess
-from matplotlib.lines import Line2D
 from detectCSpatterns import get_filtered_patterns
-import ttkbootstrap as ttkbs
-from ttkbootstrap.constants import *
+# import ttkbootstrap as  tk
+# from ttkbootstrap.constants import *
+#################################################################
 
 
+##################################################################
 # Initialize the mixer pygame mixer to play audio on my site.
 pygame.mixer.init()
 
@@ -154,12 +158,44 @@ samie_style = {
         "base_mpf_style": "nightclouds",
     }
 
+
+# samie_style_obj = mpf.make_mpf_style(
+#         base_mpl_style="seaborn",
+#         rc={
+#             "axes.facecolor": "#202020",
+#             "axes.grid": False,
+#             "xtick.color": "w",
+#             "ytick.color": "w",
+#             "grid.color": "#31363F",
+#             "text.color": "w",
+#             "figure.facecolor": "#202020",
+#         },
+#         style_dict={
+#             "candlestick": {
+#                 "colorup": "#00ff00",
+#                 "colordown": "#ff0000",
+#                 "linewidth": 1,
+#                 "edgecolor": "w",
+#             },
+#             "volume": {
+#                 "colorup": "#00ff00",
+#                 "colordown": "#ff0000",
+#             },
+#         },
+#     )
+
     # samie_style = mpf.make_mpf_style(base_mpf_style='charles', 
     # marketcolors=mpf.make_marketcolors(up='green', down='black', inherit=True))
 
 samie_style_obj = mpf.make_mpf_style(**samie_style)
     
 
+# Create a Matplotlib figure and canvas
+fig = Figure(figsize=(14.5, 8), dpi=100)
+fig.set_edgecolor('blue')
+fig.set_facecolor('#131722')
+fig.text(0.99, 0.95, 'MashaAllah', fontsize=10, ha='right', color='green')
+    
 
     
 def fetch_data_from_db(symbol, selected_period):
@@ -230,7 +266,7 @@ async def calculate_and_store_rsi(symbol):
     cur.execute("SELECT MAX(date) FROM daily_prices WHERE symbol = %s AND rsi3 IS NOT NULL", (symbol,))
     # last_rsi_date = cur.fetchone()[0]
     end_date = datetime.now().date()
-    last_rsi_date = end_date - timedelta(days=14)
+    last_rsi_date = end_date - timedelta(days=140)
     
 
     # Fetch only new data
@@ -475,39 +511,18 @@ def plot_daily_chart(symbol, selected_period):
     fig.tight_layout()
     fig.subplots_adjust(left=0.05, right=0.95, top=0.95, bottom=0.05)
 
-    ax1 = fig.add_subplot(3, 1, 1)
-    ax2 = fig.add_subplot(3, 1, 2, sharex=ax1)
+    # Create the subplots
+    ax1 = fig.add_subplot(4, 1, 1)
+    ax2 = fig.add_subplot(4, 1, 2, sharex=ax1)
+    ax3 = fig.add_subplot(4, 1, 3, sharex=ax1)
+    ax4 = fig.add_subplot(4, 1, 4, sharex=ax1)
+    
+    
+    
     ax1.set_facecolor('#000000ff') 
     ax2.set_facecolor('#000000ff')
-    ax3 = fig.add_subplot(3, 1, 3, sharex=ax2) 
-    
-    
-    #Example apd = [mpf.make_addplot(buy, scatter=True, markersize=100, marker=r'$\Uparrow$', color='green')]
-    #mpf.add_line(price=100, color='red', style='dashed', width=1)
-    # Add the highlight plot to the original plot
-    
-    
-    
-    # addplot = [
-    #     # mpf.make_addplot(df['ma7'], ax=ax1, color='red'),
-    #     # mpf.make_addplot(df['ma21'], ax=ax1, color='black'),
-    #     # mpf.make_addplot(df['ma63'], ax=ax1, color='green'),
-    #     mpf.make_addplot(df['ma189'], ax=ax1, color='purple'),
-    #     mpf.make_addplot(df['mamix14'], ax=ax1, color='blue'),
-    #     mpf.make_addplot(df['mamix42'], ax=ax1, color='red'),
-    #     mpf.make_addplot(df['vwma25'], ax=ax1, color='#37B7C3'),
-    #     mpf.make_addplot(df['volsma5'], ax=ax2, color='#ff00ff'),
-    #     mpf.make_addplot(df['traderule1_highlight'], ax=ax1, type='scatter', markersize=100, marker='s', color='#bcf5bc'), # working code
-    #     mpf.make_addplot(df['traderule2_highlight'], ax=ax1,  type='scatter', markersize=100, marker='^', color='#1e90ff'), # working code
-    #     mpf.make_addplot(df['traderule3_highlight'], ax=ax1,  type='scatter', markersize=100, marker='s', color='#7572f1'), # working code
-    #     mpf.make_addplot(df['traderule4_highlight'], ax=ax1, type='scatter', markersize=100, marker='d', color='#ff00ff'),  # New color for traderule4
-    #     mpf.make_addplot(df['traderule5_highlight'], ax=ax1, type='scatter', markersize=100, marker='^', color='#067887'),  # New color for traderule4
-    #     mpf.make_addplot(df['traderule6_highlight'], ax=ax1, type='scatter', markersize=100, marker='^', color='#007117'),  # New color for traderule4
-    #     # mpf.make_addplot([horizontal_line]*len(df), ax=ax1, color='#7572f1', linestyle='--') working code for only one time occurance
-
-    # ]
-    
-    
+    ax3.set_facecolor('#000000ff')
+    ax4.set_facecolor('#000000ff')
     
     
     addplot = [
@@ -520,6 +535,7 @@ def plot_daily_chart(symbol, selected_period):
         mpf.make_addplot(df['traderule4_highlight'], ax=ax1, type='scatter', markersize=100, marker='d', color='#ff00ff'),  # New color for traderule4
         mpf.make_addplot(df['traderule5_highlight'], ax=ax1, type='scatter', markersize=100, marker='^', color='#067887'),  # New color for traderule4
         mpf.make_addplot(df['traderule6_highlight'], ax=ax1, type='scatter', markersize=100, marker='^', color='#007117'),  # New color for traderule4
+        
         # mpf.make_addplot([horizontal_line]*len(df), ax=ax1, color='#7572f1', linestyle='--') working code for only one time occurance
 
     ]
@@ -529,6 +545,12 @@ def plot_daily_chart(symbol, selected_period):
     show_mamix42 = True
     show_vwma25 = True
     show_volsma5 = True
+    show_rsi3 = True
+    
+    ### RSI SEttings
+    
+    overbought_mask = df['rsi3'] > 60
+    oversold_mask = df['rsi3'] < 40
     
     if show_ma189:
         addplot.append(mpf.make_addplot(df['ma189'], ax=ax1, color='purple', width=0.5))
@@ -540,6 +562,12 @@ def plot_daily_chart(symbol, selected_period):
         addplot.append(mpf.make_addplot(df['vwma25'], ax=ax1, color='#37B7C3')),
     if show_volsma5:
         addplot.append(mpf.make_addplot(df['volsma5'], ax=ax2, color='#ff00ff')),
+    if show_rsi3:
+        addplot.append(mpf.make_addplot(df['rsi3'], ax=ax3, color='#1e90ff'))
+        addplot.append(mpf.make_addplot(df['rsi3'].where(overbought_mask), ax=ax3, color='green', fill_between={'y1': 60, 'y2': 100, 'alpha': 0.3}))
+        addplot.append(mpf.make_addplot(df['rsi3'].where(oversold_mask), ax=ax3, color='red', fill_between={'y1': 0, 'y2': 40, 'alpha': 0.3}))
+
+
         
 
     
@@ -560,7 +588,6 @@ def plot_daily_chart(symbol, selected_period):
     #         fig.canvas.draw()
     # fig.canvas.mpl_connect('button_press_event', on_click)
     
-    #mpf.plot(df, hlines=['traderule3_high'], type='candle')
     # mpf.plot(df, type='candle', style=samie_style_obj, ax=ax1, volume=ax2, datetime_format='%b %d', addplot=addplot) # working code
     mpf.plot(df, type='candle', style=samie_style_obj, ax=ax1, volume=ax2, datetime_format='%m-%d', addplot=addplot, returnfig=True)
     
@@ -591,12 +618,16 @@ def plot_daily_chart(symbol, selected_period):
     
 
 
-    ax1.set_title(f' ({selected_period}) :  {latest_info}', loc='left',  fontsize=10, color='dodgerblue')
+    ax1.set_title(f' {selected_period} :  {latest_info}', loc='left',  fontsize=10, color='dodgerblue', y=1)
     # ax1.set_ylabel('Price')
     ax1.grid(axis='both', which='both', linestyle='-.', linewidth=0.3, color='#31363F')
+    ax2.grid(axis='both', which='both', linestyle='-.', linewidth=0.3, color='#31363F')
+    ax3.grid(axis='both', which='both', linestyle='-.', linewidth=0.3, color='#31363F')
+    ax4.grid(axis='both', which='both', linestyle='-.', linewidth=0.3, color='#31363F')
+    
     ax1.tick_params(axis='y', colors='dodgerblue')
-    ax2.tick_params(axis='y', colors='dodgerblue')
-    ax2.tick_params(axis='x', colors='dodgerblue')
+    ax4.tick_params(axis='y', colors='dodgerblue')
+    ax4.tick_params(axis='x', colors='dodgerblue')
     
     # Enhanced Gridlines for ax1 (Price Chart)
     # ax1.grid(True, which='both', linestyle='--', linewidth=0.5, color='gray')  # Major and minor grids for ax1
@@ -622,8 +653,6 @@ def plot_daily_chart(symbol, selected_period):
     
     # Set the title on the primary axes to include the symbol name
     # ax1.set_title(f'{symbol} Stock Price ({selected_period})', loc='center', fontsize=16, fontweight='bold')
-    fig.suptitle(f'{symbol}', fontsize=14, y=0.98, color='#ff000f')  # Adjust the y position as needed
-    fig.text(0.99, 0.95, 'MashaAllah', fontsize=10, ha='right', color='green')
     ############ working code for line below for drawing lines.. dont delete.
     
     # if not traderule3_high.empty:
@@ -658,29 +687,41 @@ def plot_daily_chart(symbol, selected_period):
     
     if not highlight_high_values.empty:
         for value in highlight_high_values:
-            ax1.axhline(y=value, color='#0042a1', linestyle='--', linewidth=1)	
+            ax1.axhline(y=value, color='#ff000f', linestyle='--', linewidth=1)	
     
     if not highlight_low_values.empty:
         for value in highlight_low_values:
-            ax1.axhline(y=value * 0.95, color='#ff000f', linestyle='--', linewidth=1)          ### working code
+            ax1.axhline(y=value * 0.95, color='#0042a1', linestyle='--', linewidth=1)          ### working code
     
-    
+    fig.suptitle(f'{symbol}', fontsize=14, y=0.95, color='#000ff0ff')  # Adjust the y position as needed
+
     # # Volume Chart
     # # Plot the volume chart on ax2
     # ax2.set_title('  Volume', loc='left',  fontsize=10, pad=5)
     # ax2.set_ylabel('Volume')
     # ax2.yaxis.set_label_position('right')
-    ax2.yaxis.tick_right()
+    ax2.yaxis.tick_left()
     ax2.yaxis.set_major_formatter(ticker.FuncFormatter(volume_formatter))
+    ax3.yaxis.tick_right()
+    ax4.yaxis.tick_left()
         
     # Enhanced Gridlines for ax2 (Volume Chart)
     ax2.grid(axis='both', which='both', linestyle='-.', linewidth=0.3, color='#31363F')  # Major and minor grids for ax2
 
-    ax1.set_position([0.1, 0.3, 0.8, 0.6])  # Adjust position to make main chart larger
-    ax2.set_position([0.1, 0.1, 0.8, 0.2])  # Adjust position to make volume chart smaller
+    #################################################################################################
+    ##### Configured the below after so many trails.. dont change. best for 4 chart layout.
+    ax1.set_position([0.09, 0.41, 0.84, 0.55])  # [left, bottom, width, height]
+    ax2.set_position([0.09, 0.29, 0.84, 0.12])
+    ax3.set_position([0.09, 0.17, 0.84, 0.12])
+    ax4.set_position([0.09, 0.05, 0.84, 0.12])
+    
+    # Disable x-axis tickers for all subplots except ax4
+    plt.setp(ax1.get_xticklabels(), visible=False)
+    plt.setp(ax2.get_xticklabels(), visible=False)
+    plt.setp(ax3.get_xticklabels(), visible=False)
 
     # Assuming you have a figure and two axes, ax1 and ax2, set up as part of your plotting code
-
+    ################################################################################################
     # Calculate the interval for 5% of the price range
     data_range = df['Close'].max() - df['Close'].min()
     # tick_interval = data_range * 0.05  # 5% of the data range
@@ -693,30 +734,69 @@ def plot_daily_chart(symbol, selected_period):
     ax2.xaxis.tick_bottom()
     plt.setp(ax2.get_xticklabels(), rotation=0, ha='center' )
     
+    
+    
+    # for RSI
+    ax3.axhline(y=40, color='red', linestyle='--', linewidth=.4)
+    ax3.axhline(y=60, color='green', linestyle='--', linewidth=.4)
 ################################### crosshair ################################################    
 
     # Initialize the crosshair lines
-    crosshair_v = ax1.axvline(x=0, color='#074173', linestyle=':')
-    crosshair_h = ax1.axhline(y=0, color='#074173', linestyle=':')
-    crosshair_ax2_v = ax2.axvline(x=0, color='#074173', linestyle=':')
-    crosshair_ax2_h = ax2.axhline(y=0, color='#074173', linestyle=':')
+    crosshair_ax1_v = ax1.axvline(x=0, color='#074173', linestyle=':')
+    crosshair_ax1_h = ax1.axhline(y=0, color='#074173', linestyle=':')
+    crosshair_ax2_v = ax2.axvline(x=0, color='#075173', linestyle=':')
+    crosshair_ax2_h = ax2.axhline(y=0, color='#075173', linestyle=':')
+    crosshair_ax3_v = ax3.axvline(x=0, color='#076173', linestyle=':')
+    crosshair_ax3_h = ax3.axhline(y=0, color='#076173', linestyle=':')
+    crosshair_ax4_v = ax4.axvline(x=0, color='#077173', linestyle=':')
+    crosshair_ax4_h = ax4.axhline(y=0, color='#077173', linestyle=':')
     
 
-    # Function to update the crosshair position
-    def update_crosshair(event):
-        if event.inaxes == ax1 or ax2:
-            crosshair_v.set_xdata([event.xdata, event.xdata])
-            crosshair_ax2_v.set_xdata([event.xdata, event.xdata])
-            ymin, ymax = ax1.get_ylim() 
-            ax2ymin, ax2ymax = ax2.get_ylim()
-            if event.ydata is not None and ((ymin <= event.ydata <= ymax) or (ax2ymin <= event.ydata <= ax2ymax)):
+    # Function to update the crosshair position this work.. 
+    # def update_crosshair(event):
+    #     if event.inaxes == ax1 or ax2 or ax3 or ax4:
+    #         crosshair_ax1_v.set_xdata([event.xdata, event.xdata])
+    #         crosshair_ax2_v.set_xdata([event.xdata, event.xdata])
+    #         crosshair_ax3_v.set_xdata([event.xdata, event.xdata])
+    #         crosshair_ax4_v.set_xdata([event.xdata, event.xdata])
+    #         ax1ymin, ax1ymax = ax1.get_ylim() 
+    #         ax2ymin, ax2ymax = ax2.get_ylim()
+    #         ax3ymin, ax3ymax = ax3.get_ylim()
+    #         ax4ymin, ax4ymax = ax4.get_ylim()
+            
+    #         if event.ydata is not None and ((ax1ymin <= event.ydata <= ax1ymax) or (ax2ymin <= event.ydata <= ax2ymax) or (ax3ymin <= event.ydata <= ax3ymax) or (ax4ymin <= event.ydata <= ax4ymax)):
 
-                crosshair_h.set_ydata([event.ydata, event.ydata])
-                crosshair_ax2_h.set_ydata([event.ydata, event.ydata])
+    #             crosshair_ax1_h.set_ydata([event.ydata, event.ydata])
+    #             crosshair_ax2_h.set_ydata([event.ydata, event.ydata])
+    #             crosshair_ax3_h.set_ydata([event.ydata, event.ydata])
+    #             crosshair_ax3_h.set_ydata([event.ydata, event.ydata])
                 
+    #         else:
+    #             crosshair_ax1_h.set_ydata([ax1ymin, ax1ymin])
+    #             crosshair_ax2_h.set_ydata([ax2ymin, ax2ymin])
+    #             crosshair_ax3_h.set_ydata([ax3ymin, ax3ymin])
+    #             crosshair_ax4_h.set_ydata([ax4ymin, ax4ymin])
+    #         fig.canvas.draw_idle()
+
+    def update_crosshair(event):
+        if event.inaxes in (ax1, ax2, ax3, ax4):
+            # Update vertical crosshairs
+            for crosshair in (crosshair_ax1_v, crosshair_ax2_v, crosshair_ax3_v, crosshair_ax4_v):
+                crosshair.set_xdata([event.xdata, event.xdata])
+
+            # Get y-limits for all axes
+            y_limits = [ax.get_ylim() for ax in (ax1, ax2, ax3, ax4)]
+
+            if event.ydata is not None and any(ymin <= event.ydata <= ymax for ymin, ymax in y_limits):
+                # Update horizontal crosshairs if within any axis limits
+                for crosshair in (crosshair_ax1_h, crosshair_ax2_h, crosshair_ax3_h, crosshair_ax4_h):
+                    crosshair.set_ydata([event.ydata, event.ydata])
             else:
-                crosshair_h.set_ydata([ymin, ymin])
-                crosshair_ax2_h.set_ydata([ax2ymin, ax2ymin])
+                # Set horizontal crosshairs to bottom of each axis if outside limits
+                for crosshair, (ymin, _) in zip((crosshair_ax1_h, crosshair_ax2_h, crosshair_ax3_h, crosshair_ax4_h), y_limits):
+                    crosshair.set_ydata([ymin, ymin])
+
+            # Redraw the figure
             fig.canvas.draw_idle()
 
     # Connect the function to the figure's motion_notify_event
@@ -767,6 +847,7 @@ def plot_daily_chart(symbol, selected_period):
     # mplcursors.cursor(ax1, hover=True).connect("add", custom_tooltip)
 
     canvas.draw()
+ 
 
 def plot_monthly_chart(symbol, selected_period):
     
@@ -849,7 +930,7 @@ def plot_monthly_chart(symbol, selected_period):
 
     # Plot the candlestick chart
     mpf.plot(monthly_df, type='candle', style=samie_style_obj, ax=ax1, volume=ax2, datetime_format='%Y-%m')
-    ax1.set_title(f' ({selected_period}) :  {latest_info}', loc='left',  fontsize=10, color='dodgerblue')
+    ax1.set_title(f' ({selected_period}) :  {latest_info}', loc='left',  fontsize=10, color='dodgerblue', y=1)
     ax1.set_ylabel('Price')
     ax1.grid(axis='both', which='both', linestyle='--', linewidth=0.5, color='#31363F')
     data_range = monthly_df['Close'].max() - monthly_df['Close'].min()
@@ -862,7 +943,7 @@ def plot_monthly_chart(symbol, selected_period):
     
     # Set the title on the primary axes to include the symbol name
     # ax1.set_title(f'{symbol} Stock Price ({selected_period})', loc='center', fontsize=16, fontweight='bold')
-    fig.suptitle(f'{symbol}', fontsize=14, y=0.98, color='#ff000f')  # Adjust the y position as needed
+    fig.suptitle(f'{symbol}', fontsize=14, y=0.95, color='#ff000f')  # Adjust the y position as needed
     fig.text(0.99, 0.95, 'MashaAllah', fontsize=10, ha='right', color='green')
     # Enhanced Gridlines for ax1 (Price Chart)
     ax1.grid(True, which='both', linestyle='--', linewidth=0.5, color='gray')  # Major and minor grids for ax1
@@ -1345,7 +1426,7 @@ def detect_cspatterns():
 
 
         # Create a popup window with a table to display the results
-        popup = ttkbs.Toplevel()
+        popup =  tk.Toplevel()
         popup.title("CSpatterns Detection Results")
 
         # Create a table to display the results
@@ -1409,13 +1490,13 @@ async def update_everything():
         
         
 def show_recent_signals():
-    popup = ttkbs.Toplevel()
+    popup =  tk.Toplevel()
     popup.title("Recent Signals")
     
     # Create a style
     style = ttk.Style()
-    style.configure("Treeview", font=('Helvetica', 10), foreground="black", rowheight=20)
-    style.configure("BoldText", font=('Helvetica', 10, 'bold'), foreground="black")
+    style.configure("Treeview", font=('Arial', 10), foreground="black", rowheight=20)
+    style.configure("BoldText", font=('Arial', 10, 'bold'), foreground="black")
 
     style.configure(
         "Treeview",
@@ -1548,14 +1629,14 @@ def create_traders_diary_notes_popup():
     notes_data = cur.fetchall()
     
     # Create the popup window
-    traders_diary_notes_create_popup = ttkbs.Toplevel(root)
+    traders_diary_notes_create_popup =  tk.Toplevel(root, position="right")
     traders_diary_notes_create_popup.title("Traders Diary")
 
     # Symbol Display
     selected_symbol = watchlist.get(watchlist.curselection())
-    symbol_label = ttkbs.Label(traders_diary_notes_create_popup, text="Symbol:")
+    symbol_label =  tk.Label(traders_diary_notes_create_popup, text="Symbol:")
     symbol_label.pack()
-    symbol_entry = ttkbs.Entry(traders_diary_notes_create_popup)
+    symbol_entry =  tk.Entry(traders_diary_notes_create_popup)
     symbol_entry.insert(0, selected_symbol)
     symbol_entry.config(state='readonly')
     symbol_entry.pack()
@@ -1566,17 +1647,17 @@ def create_traders_diary_notes_popup():
     last_chart_date = last_chart_date_result[0].strftime('%Y-%m-%d') if last_chart_date_result[0] else datetime.now().strftime('%Y-%m-%d')
 
     # Date Display (Last chart date)
-    date_label = ttkbs.Label(traders_diary_notes_create_popup, text="Date:")
+    date_label =  tk.Label(traders_diary_notes_create_popup, text="Date:")
     date_label.pack()
-    date_entry = ttkbs.Entry(traders_diary_notes_create_popup)
+    date_entry =  tk.Entry(traders_diary_notes_create_popup)
     date_entry.insert(0, last_chart_date)
     date_entry.config(state='readonly')
     date_entry.pack()
 
     # Notes Input Area
-    notes_label = ttkbs.Label(traders_diary_notes_create_popup, text="Notes:")
+    notes_label =  tk.Label(traders_diary_notes_create_popup, text="Notes:")
     notes_label.pack()
-    notes_text = ttkbs.Text(traders_diary_notes_create_popup, height=5, width=30)
+    notes_text =  tk.Text(traders_diary_notes_create_popup, height=5, width=30)
     notes_text.pack()
 
     def save_notes():
@@ -1597,7 +1678,7 @@ def create_traders_diary_notes_popup():
             messagebox.showwarning("Empty Notes", "Please enter some notes before saving.")
 
     # --- Buttons ---
-    save_button = ttkbs.Button(traders_diary_notes_create_popup, text="Save", command=save_notes)
+    save_button =  tk.Button(traders_diary_notes_create_popup, text="Save", command=save_notes)
     save_button.pack()
     traders_diary_notes_create_popup.mainloop()
 
@@ -1608,7 +1689,7 @@ def view_traders_diary_notes_popup():
         # print(diary_notes_data)
 
         """Opens a new window to display all previous notes."""
-        view_notes = ttkbs.Toplevel(root)
+        view_notes =  tk.Toplevel(root)
         view_notes.title("All Previous Notes for all Symbols")
 
         # Create a Treeview to display the notes
@@ -1631,7 +1712,7 @@ def view_traders_diary_notes_popup():
             tree.insert("", "end", values=(date, symbol, notes))
 
         # Add a delete button to the Treeview
-        delete_button = ttkbs.Button(view_notes, text="Delete Note", 
+        delete_button =  tk.Button(view_notes, text="Delete Note", 
                                  command=lambda: delete_note(tree.item(tree.selection())['values'][0],
                                                              tree.item(tree.selection())['values'][1]) 
                                  if tree.selection() else None)
@@ -1653,7 +1734,7 @@ def view_traders_diary_notes_popup():
                 messagebox.showerror("Error", str(e))
 
     
-        view_button = ttkbs.Button(view_notes, text="View Previous Notes", 
+        view_button =  tk.Button(view_notes, text="View Previous Notes", 
                             command=view_traders_diary_notes_popup)
         view_button.pack()
         
@@ -1676,69 +1757,93 @@ def resize_figure(event):
     fig.set_size_inches(width_in, height_in)
 
 ########################################################################################################################################################################    
+BG_COLOR = '#162636'
 # Create the main window
-root = ttkbs.Window(themename="darkly")
+root = tk.Tk()
+
+# root =  tk.Window(themename="darkly")
 root.title("Subhantech Stock Watchlist")
+root.configure(background=BG_COLOR)
+# style.configure("TFrame", background="#162636")
+# style.theme_use("darkly")
+# style.configure("darkly", background="#162636")
 root.geometry("1900x1000")
 
+import ctypes
 
-# Create a sidebar frame
-sidebar = tk.Frame(root, width=300)
-sidebar.pack(expand=False, fill='y', side='left', anchor='nw', ipadx=5, padx=5)
+def set_title_bar_color(root):
+    root.update()
+    DWMWA_CAPTION_COLOR = 35
+    hwnd = ctypes.windll.user32.GetParent(root.winfo_id())
+    color = 0x002B2B2B  # Replace with your desired color in hex format
+    ctypes.windll.dwmapi.DwmSetWindowAttribute(
+        hwnd, 
+        DWMWA_CAPTION_COLOR,
+        ctypes.byref(ctypes.c_int(color)),
+        ctypes.sizeof(ctypes.c_int)
+    )
+
+# Call this function after creating your root window
+set_title_bar_color(root)
+
+
+# text_label = Label(root, text="You hold the power to make your life what you want...!", font=("Arial", 10))
+# text_label.pack()  # or use grid() or place() for more precise positioning
+
+
+def load_quotes():
+    with open('quotes.txt', 'r', encoding='utf-8') as file:
+        return [html.escape(line.strip()) for line in file if line.strip()]
+
+def update_quote():
+    quotes = load_quotes()
+    random_quote = random.choice(quotes)
+    text_label.config(text=random_quote)
+    threading.Timer(120, update_quote).start()  # 300 seconds = 5 minutes
+
+# Create the Label
+text_label = Label(root, text="", font=("Arial", 10), wraplength=1000)
+text_label.pack()
+
+# Start updating quotes
+update_quote()
+
+# # Create a sidebar frame    
+# sidebar = tk.Frame(root, width=300)
+# sidebar.pack(expand=False, fill='y', side='left', anchor='nw', ipadx=5, padx=5)
+# sidebar.pack_propagate(False)
+
+
+# Create the sidebar
+sidebar = tk.Frame(root, width=250, background=BG_COLOR)
+sidebar.pack(expand=False, side='left', fill='y', anchor='nw', ipadx=5, padx=5)
 sidebar.pack_propagate(False)
 
-# Create a listbox for the watchlist
-watchlist = tk.Listbox(sidebar, bg="dark red", fg="white", font=("Helvetica", 10))
-watchlist.pack(expand=True, fill='both', padx=5, ipadx=5)
+# Create the watchlist frame with a fixed height
+watchlist_frame = tk.Frame(sidebar, width=180, height=400, background=BG_COLOR)  # Adjust height as needed
+watchlist_frame.pack(side='top', fill='y', expand=False)
+watchlist_frame.pack_propagate(False)
 
-# Add a scrollbar to the frame
-scrollbar = ttkbs.Scrollbar(watchlist, command=watchlist.yview)
-scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+# Create a listbox for the watchlist
+watchlist = tk.Listbox(watchlist_frame, fg="black", font=("Arial", 10), bd=0, borderwidth=0, relief=tk.FLAT)
+watchlist.pack(side='left', expand=True, fill='y', padx=5, pady=5)
+
+# Add a scrollbar to the watchlist frame
+scrollbar = tk.Scrollbar(watchlist_frame, command=watchlist.yview)
+scrollbar.pack(side='right', fill='y')
 
 # Configure the listbox to use the scrollbar
 watchlist.config(yscrollcommand=scrollbar.set)
 
-# Apply a custom style to the Listbox
-style = ttk.Style()
-style.theme_use("clam")  # or any other theme you prefer
-style.configure("TListbox", background="dark red", foreground="white", font=("Helvetica", 10))
+# # Apply a custom style to the Listbox
+# style = ttk.Style()
+# style.theme_use("clam")  # or any other theme you prefer
+# style.configure("TListbox", background="dark red", foreground="white", font=("Arial", 10))
 
 
-def search_stocks(event=None):
-    search_query = search_entry.get().lower()
-    watchlist.selection_clear(0, tk.END)  # Clear previous selection
-
-    for i in range(watchlist.size()):
-        symbol = watchlist.get(i).lower()
-        if search_query in symbol:
-            watchlist.selection_set(i)  # Highlight matching items
-        else:
-            watchlist.selection_clear(i)  # Unhighlight non-matching items
-
-###########################################################################
-stock_search_section = ttkbs.Frame(sidebar)
-stock_search_section.pack(fill=tk.Y)
-
-# Create a search entry and button
-search_entry = ttkbs.Entry(stock_search_section, width=12)
-search_entry.pack(side=tk.LEFT, pady=10, padx=5)
-search_button = ttkbs.Button(stock_search_section, text="Search", command=search_stocks)
-search_button.pack(pady=10, padx=5, side=tk.LEFT)
-# Bind the Enter key to the search_watchlist method
-search_entry.bind("<Return>", search_stocks)
-
-# Add items to the watchlist from the database
-cur.execute("SELECT symbol FROM tickers")
-symbols = cur.fetchall()
-# Sort the symbols in ascending order
-symbols.sort()
-for symbol in symbols:
-    watchlist.insert(tk.END, symbol[0])
-
-# Bind the listbox selection event to the plot function
-watchlist.bind('<<ListboxSelect>>', on_select)
-
-
+# Create the sort frame
+sort_frame = tk.Frame(sidebar, width=180, background=BG_COLOR)
+sort_frame.pack(side='top', fill='x', anchor='nw')
 
 def sort_watchlist(reverse=False):
     # Get the current watchlist items
@@ -1754,98 +1859,143 @@ def sort_watchlist(reverse=False):
     for item in watchlist_items:
         watchlist.insert(tk.END, item)
 
+# Create the sort buttons
+sort_button = tk.Button(sort_frame, text="▲", width=4, command=lambda: sort_watchlist())
+sort_button.pack(side=tk.LEFT, pady=10, padx=5)
 
-# sort_watchlist_frame = tk.Frame(sidebar, bg='dodgerblue')
-# sort_watchlist_frame.pack()
+reverse_sort_button = tk.Button(sort_frame, text="▼", width=4, command=lambda: sort_watchlist(reverse=True))
+reverse_sort_button.pack(side=tk.LEFT, pady=10, padx=5)
 
-# Create buttons to trigger the sort functionality
+#######################################################################
+##########################################################################
+# frame2 = tk.Frame(top_container, width=120, height=500, bg='blue')
+# frame2.pack(side='left')
 
-# sort_section = tk.Frame(sidebar)
-# sort_section.pack(side=tk.RIGHT)
-sort_button = ttkbs.Button(stock_search_section, text="▲", width = 4, command=lambda: sort_watchlist())
-sort_button.pack(side=tk.RIGHT)
+# Create the third frame below
+sidebar_bottom_frame =  tk.Frame(sidebar, width=180, height=800, background=BG_COLOR)
+sidebar_bottom_frame.pack(side='top', anchor='nw')
 
-reverse_sort_button = ttkbs.Button(stock_search_section, text="▼", width = 4, command=lambda: sort_watchlist(reverse=True))
-reverse_sort_button.pack(side=tk.RIGHT)
+def search_stocks(event=None):
+    search_query = search_entry.get().lower()
+    watchlist.selection_clear(0, tk.END)  # Clear previous selection
+
+    for i in range(watchlist.size()):
+        symbol = watchlist.get(i).lower()
+        if search_query in symbol:
+            watchlist.selection_set(i)  # Highlight matching items
+        else:
+            watchlist.selection_clear(i)  # Unhighlight non-matching items
+
+
+stock_search_section =  tk.Frame(sidebar_bottom_frame, background=BG_COLOR)
+stock_search_section.pack(fill=tk.Y, anchor='nw')
+
+# Create a search entry and button
+search_entry =  tk.Entry(stock_search_section, width=12)
+search_entry.pack(side=tk.LEFT, pady=10, padx=5)
+search_button =  tk.Button(stock_search_section, text="Search", command=search_stocks)
+search_button.pack(pady=10, padx=5, side=tk.LEFT)
+# Bind the Enter key to the search_watchlist method
+search_entry.bind("<Return>", search_stocks)
+
+###########################################################
+
+# Add items to the watchlist from the database
+cur.execute("SELECT symbol FROM tickers")
+symbols = cur.fetchall()
+# Sort the symbols in ascending order
+symbols.sort()
+for symbol in symbols:
+    watchlist.insert(tk.END, symbol[0])
+
+# Bind the listbox selection event to the plot function
+watchlist.bind('<<ListboxSelect>>', on_select)
+
 
 
 ############################################################
-stock_entry_section = ttkbs.Frame(sidebar)
-stock_entry_section.pack(fill=tk.Y)
+stock_entry_section =  tk.Frame(sidebar_bottom_frame, background=BG_COLOR)
+stock_entry_section.pack(fill=tk.Y, side=tk.TOP, anchor='nw')
 
-stock_entry = ttkbs.Entry(stock_entry_section, width=12)
+stock_entry =  tk.Entry(stock_entry_section, width=12)
 stock_entry.pack(side=tk.LEFT, padx=5, pady=5)
 
-add_button = ttkbs.Button(stock_entry_section, text="Add Stock", command=add_stock)
+add_button =  tk.Button(stock_entry_section, text="Add Stock", command=add_stock)
 add_button.pack(padx=5, pady=5, side=tk.RIGHT)
 
-delete_button = ttkbs.Button(stock_entry_section, text="Delete Stock", command=delete_stock)
+delete_button =  tk.Button(stock_entry_section, text="Delete Stock", command=delete_stock)
 delete_button.pack(padx=5,pady=5, side=tk.RIGHT)
 
 ###################################################
-stock_other_section = ttkbs.Frame(sidebar)
-stock_other_section.pack(fill=tk.Y)
+stock_other_section =  tk.Frame(sidebar_bottom_frame, background=BG_COLOR)
+stock_other_section.pack(fill=tk.Y, side=tk.TOP)
 
-update_all_rules_button = ttkbs.Button(stock_other_section, text="Update Screeners", command=update_Screeners)
+update_all_rules_button =  tk.Button(stock_other_section, text="Update Screeners", command=update_Screeners)
 update_all_rules_button.pack(side=tk.RIGHT, padx=10, pady=5)
 
-add_fromfile_button = ttkbs.Button(stock_other_section, text="Add Chartink Stocks", command=add_chartink_stock)
+add_fromfile_button =  tk.Button(stock_other_section, text="Add Chartink Stocks", command=add_chartink_stock)
 add_fromfile_button.pack(padx=10,pady=5, side=tk.LEFT)
 
 ##########################################################
-download_data_section = ttkbs.Frame(sidebar)
-download_data_section.pack(fill=tk.Y)
+download_data_section =  tk.Frame(sidebar_bottom_frame, background=BG_COLOR)
+download_data_section.pack(fill=tk.Y, side=tk.TOP)
 
 # Add start date and end date date pickers
-date_pickers_frame = ttkbs.Frame(download_data_section, width=24)
+date_pickers_frame =  tk.Frame(download_data_section, width=24, background=BG_COLOR)
 date_pickers_frame.pack(side=tk.TOP, padx=10, pady=5, fill=tk.X)
 
-start_date_label = ttkbs.Label(date_pickers_frame, text="SD:")
+start_date_label =  tk.Label(date_pickers_frame, text="SD:")
 start_date_label.pack(side=tk.LEFT, padx=1, pady=5)
 
-start_date_picker = ttkbs.DateEntry(date_pickers_frame, width=12)
+start_date_picker =    DateEntry(date_pickers_frame, width=12)
 start_date_picker.pack(side=tk.LEFT, padx=1, pady=5)
 
-end_date_label = ttkbs.Label(date_pickers_frame, text="ED:")
+end_date_label =  tk.Label(date_pickers_frame, text="ED:")
 end_date_label.pack(side=tk.LEFT, padx=1, pady=5)
 
-end_date_picker = ttkbs.DateEntry(date_pickers_frame, width=12)
+end_date_picker =    DateEntry(date_pickers_frame, width=12)
 end_date_picker.pack(side=tk.LEFT, padx=1, pady=5)
 
 # Update the Download HistData button to use the start and end dates
-download_histdata_button = ttkbs.Button(download_data_section, text="Download HistData", command=lambda: download_histdata(start_date_picker._startdate.date(), end_date_picker._startdate.date()))
+download_histdata_button =  tk.Button(download_data_section, text="Download HistData", command=lambda: download_histdata(start_date_picker.get_date(), end_date_picker.get_date()))
 download_histdata_button.pack(side=tk.RIGHT, padx=10, pady=5)
 
 
-data_update_section = ttkbs.Frame(sidebar)
-data_update_section.pack(fill=tk.Y)
+data_update_section =  tk.Frame(sidebar_bottom_frame, background=BG_COLOR)
+data_update_section.pack(side=tk.TOP,fill=tk.Y)
 
-up2date_chart_button = ttkbs.Button(data_update_section, text=" Update RSI, MA, and Traderules ", command=up2date_chart)
-up2date_chart_button.pack(side=tk.RIGHT, padx=10, pady=5)
+up2date_chart_button =  tk.Button(data_update_section, text=" Update RSI, MA, and Traderules ", command=up2date_chart)
+up2date_chart_button.pack(side=tk.LEFT, padx=10, pady=5)
 
-progress_bar_section = ttkbs.Frame(sidebar)
-progress_bar_section.pack(fill=tk.Y)
+progress_bar_section =  tk.Frame(sidebar_bottom_frame, background=BG_COLOR)
+progress_bar_section.pack(side=tk.TOP,fill=tk.Y)
 
-progress_bar = ttkbs.Progressbar(progress_bar_section, orient="horizontal", length=200, mode="determinate")
+progress_bar =  ttk.Progressbar(progress_bar_section, orient="horizontal", length=200, mode="determinate")
 progress_bar.pack(side=tk.LEFT, padx=10, pady=5)
 
+# # Prevent the frames from shrinking
+# top_container.pack_propagate(False)
+# watchlist_frame.pack_propagate(False)
+# # frame2.pack_propagate(False)
+# sidebar_bottom_frame.pack_propagate(False)
 
-# Create a main frame
-fig = Figure(figsize=(9, 6), dpi=100)
 
-main_frame = ttkbs.Frame(root)
+
+
+
+main_frame =  tk.Frame(root, background=BG_COLOR)
 main_frame.pack(side=tk.LEFT, fill='both', expand=True)
 
 # Create a frame to simulate the embossed shadow
-embossed_frame = ttkbs.Frame(main_frame)  # Slightly darker background
+embossed_frame =  tk.Frame(main_frame, background=BG_COLOR)  # Slightly darker background
 embossed_frame.pack(padx=3, pady=3, expand=True, fill='both')  # Add padding for the effect
 
 
-timeframe_section = ttkbs.Frame(main_frame)
-timeframe_section.pack(fill=tk.X)
+timeframe_section =  tk.Frame(main_frame, background=BG_COLOR)
+timeframe_section.pack(side=tk.TOP,fill=tk.X)
 
-period_var = ttkbs.StringVar(value='1y')
-period_label = ttkbs.Label(timeframe_section, text="Select Period:")
+period_var =  tk.StringVar(value='1y')
+period_label =  tk.Label(timeframe_section, text="Select Period:")
 period_label.pack(side=tk.LEFT, padx=5)
 
 period_options = ['6mo', '1d', '5d', '1mo', '3mo', '6mo', '1y', '2y', '3y', '4y', '5y', '6y','7y', '8y', '9y', '10y', 'max']
@@ -1857,8 +2007,8 @@ period_menu.pack(side=tk.LEFT, padx=5)
 period_var.trace_add("write", lambda *args: on_select(None))
 
 # Add TimeFrame selection
-timeframe_var = ttkbs.StringVar(value='Daily')
-timeframe_label = ttkbs.Label(timeframe_section, text="TF:")
+timeframe_var =  tk.StringVar(value='Daily')
+timeframe_label =  tk.Label(timeframe_section, text="TF:")
 timeframe_label.pack(side=tk.LEFT, padx=5)
 
 # timeframe_options = ['Daily', 'Weekly', 'Monthly']
@@ -1869,26 +2019,21 @@ timeframe_options = {
 }
 
 for option, value in timeframe_options.items():
-    button = ttkbs.Button(timeframe_section, text=option, command=lambda value=value: [timeframe_var.set(value), on_select(None)])
+    button =  tk.Button(timeframe_section, text=option, command=lambda value=value: [timeframe_var.set(value), on_select(None)])
     button.pack(side=tk.LEFT, padx=5)
     
   
-update_3days_data_button = ttkbs.Button(timeframe_section, text="Price Up2date", command=lambda: download_last_3_days_histdata())
+update_3days_data_button =  tk.Button(timeframe_section, text="Price Up2date", command=lambda: download_last_3_days_histdata())
 update_3days_data_button.pack(side=tk.RIGHT, padx=10, pady=5)
 
-detect_cspatterns_button = ttkbs.Button(timeframe_section, text="Candle patterns", command=lambda: detect_cspatterns())
+detect_cspatterns_button =  tk.Button(timeframe_section, text="Candle patterns", command=lambda: detect_cspatterns())
 detect_cspatterns_button.pack(side=tk.RIGHT, padx=10, pady=5)
 
-show_signals_button = ttkbs.Button(timeframe_section, text="Show Signals", command=show_recent_signals)
+show_signals_button =  tk.Button(timeframe_section, text="Show Signals", command=show_recent_signals)
 show_signals_button.pack(side=tk.RIGHT, padx=10, pady=5)
 
-update_everything_button = ttkbs.Button(timeframe_section, text="Update Everything", command=lambda: asyncio.run(update_everything()), style="danger")
+update_everything_button =  tk.Button(timeframe_section, text="Update Everything", command=lambda: asyncio.run(update_everything()))
 update_everything_button.pack(side=tk.RIGHT, padx=10, pady=5)
-
-# Create a Matplotlib figure and canvas
-fig = Figure(figsize=(14.5, 8), dpi=100)
-fig.set_edgecolor('blue')
-fig.set_facecolor('#131722')
 
 
 # Place the canvas inside the embossed frame
@@ -1898,26 +2043,33 @@ canvas.get_tk_widget().config(highlightthickness=5, highlightbackground="#1f3b4d
 canvas.get_tk_widget().pack(expand=True, fill='both')
 
 
-horizonScrollbar = ttkbs.Scrollbar(main_frame, orient='horizontal')
+def on_closing():
+    root.quit()
+    root.destroy()
+
+button = tk.Button(master=root, text="Quit", command=on_closing)
+button.pack(side=tk.BOTTOM)
+
+# horizonScrollbar =  tk.Scrollbar(main_frame, orient='horizontal')
 
 # Create a right sidebar frame
-right_sidebar = ttkbs.Frame(root, width=100)
+right_sidebar =  tk.Frame(root, width=100, background=BG_COLOR)
 right_sidebar.pack(side=tk.RIGHT, fill='y')
 
 #################################### Traders Section ########################################################
 
-# traders_diary_section = ttkbs.Frame(right_sidebar)
+# traders_diary_section =  tk.Frame(right_sidebar)
 # traders_diary_section.pack(fill=tk.Y)
 
 # Create a button to play the audio
-play_audio_button = ttkbs.Button(right_sidebar, text="Anxiety",  style='success.TButton', command=play_audio)
+play_audio_button =  tk.Button(right_sidebar, text="Anxiety", command=play_audio)
 play_audio_button.pack(pady=10, padx=5)
 
 
-diary_create_notes_button = ttkbs.Button(right_sidebar, text="Create Notes",  style='info.TButton', command=create_traders_diary_notes_popup)
+diary_create_notes_button =  tk.Button(right_sidebar, text="Create Notes",   command=create_traders_diary_notes_popup)
 diary_create_notes_button.pack(pady=10, padx=5,side=tk.TOP)
 
-diary_view_notes_button = ttkbs.Button(right_sidebar, text="View Notes", style='info.TButton', command=view_traders_diary_notes_popup)
+diary_view_notes_button =  tk.Button(right_sidebar, text="View Notes", command=view_traders_diary_notes_popup)
 diary_view_notes_button.pack(pady=10, padx=5,side=tk.TOP)
 
 ################################### Progress Bar Section ########################################################
