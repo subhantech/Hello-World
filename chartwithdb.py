@@ -1,5 +1,3 @@
-import pandas as pd 
-import os
 # import modin.pandas as pd
 # import modin.config as cfg
 
@@ -13,43 +11,68 @@ import os
 # # Configure Modin ONCE
 # os.environ["MODIN_ENGINE"] = "ray"  
 # cfg.Engine.put("ray") 
-
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning, message="Pick support for PolyCollection is missing")
+### Tkinter ###
 import tkinter as tk
 from tkinter import ttk
 from tkinter import ttk, messagebox, filedialog, Listbox, Label, Message
+from tkcalendar import Calendar, DateEntry
+
+#### Matplotlib mplfinance
+import matplotlib as matplotlib
+matplotlib.use("TkAgg")
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 from matplotlib.lines import Line2D
+import matplotlib.patches as patches
 import matplotlib.ticker as ticker
 import matplotlib.pyplot as plt
-import matplotlib.gridspec as gridspec
-
 import matplotlib.cbook as cbook
 import matplotlib.dates as mdates
+import mplfinance as mpf
+import mplcursors
+from matplotlib.widgets import Cursor
+
+
+### database, data processing  and historical data
 import yfinance as yf
 import psycopg2
-import mplfinance as mpf
-from ta.momentum import RSIIndicator
-import mplcursors
+import pandas as pd 
+
+### Technical Analysis
+from ta.momentum import RSIIndicator, StochRSIIndicator
+from ta.trend import CCIIndicator
+from ta.volatility import BollingerBands
+from tradingview_ta import TA_Handler, Interval, Exchange
+
+import talib
+import talipp ## try to use this 
+# from finta import TA
+
+#### Standard Libraries
 import numpy as np
 from datetime import datetime, timedelta
-from tkcalendar import Calendar, DateEntry
 import threading
-from joblib import Parallel, delayed ## need to work on this for speed processing.
 import asyncio
 import json
 import redis
 import pygame
 import random
 import html
+import ctypes
+
 import subprocess
-from detectCSpatterns import get_filtered_patterns
-# import ttkbootstrap as  tk
-# from ttkbootstrap.constants import *
+import os
+
+import sam_functions
+# from detectCSpatterns import get_filtered_patterns
+
+
 #################################################################
 
 
-##################################################################
+###################### py game audio player ############################################
 # Initialize the mixer pygame mixer to play audio on my site.
 pygame.mixer.init()
 
@@ -60,9 +83,7 @@ def play_audio():
     # Play the audio
     pygame.mixer.music.play()
     
-### Dont download data with yahoo finance always.. got blocked by that.. use the button to download only missing data. download historical data should have more options
-# like startdate and enddate to download missing data.
-
+################################################################
 
 # Database connection
 conn = psycopg2.connect(
@@ -98,16 +119,27 @@ CREATE TABLE IF NOT EXISTS daily_prices (
 # Add column to daily_prices table if it doesn't exist
 cur.execute("""
 ALTER TABLE daily_prices
-ADD COLUMN IF NOT EXISTS rsi3 FLOAT;
-ALTER TABLE daily_prices
+ADD COLUMN  IF NOT EXISTS rsi3 FLOAT,
+ADD COLUMN  IF NOT EXISTS rsi14 FLOAT,
+ADD COLUMN  IF NOT EXISTS stochrsi14 FLOAT,
+ADD COLUMN  IF NOT EXISTS stochrsi14_d FLOAT,
+ADD COLUMN  IF NOT EXISTS stochrsi14_k FLOAT,
+ADD COLUMN  IF NOT EXISTS bb_percent_b FLOAT,
+ADD COLUMN  IF NOT EXISTS cci3 FLOAT,
+ADD COLUMN  IF NOT EXISTS cci12 FLOAT,
 ADD COLUMN  IF NOT EXISTS ma7 FLOAT,
+ADD COLUMN  IF NOT EXISTS ma10 FLOAT,
 ADD COLUMN  IF NOT EXISTS ma21 FLOAT,
+ADD COLUMN  IF NOT EXISTS ma32 FLOAT,
+ADD COLUMN  IF NOT EXISTS ma43 FLOAT,
+ADD COLUMN  IF NOT EXISTS ma54 FLOAT,
 ADD COLUMN  IF NOT EXISTS ma63 FLOAT,
 ADD COLUMN  IF NOT EXISTS ma189 FLOAT,
 ADD COLUMN  IF NOT EXISTS mamix14 FLOAT,
 ADD COLUMN  IF NOT EXISTS mamix42 FLOAT,
 ADD COLUMN  IF NOT EXISTS vwma25 FLOAT,
 ADD COLUMN  IF NOT EXISTS volsma5 FLOAT,
+ADD COLUMN  IF NOT EXISTS volsma20 FLOAT,
 ADD COLUMN  IF NOT EXISTS traderule1 BOOLEAN,
 ADD COLUMN  IF NOT EXISTS traderule2 BOOLEAN,
 ADD COLUMN  IF NOT EXISTS traderule3 BOOLEAN,
@@ -228,6 +260,8 @@ def convert_period_to_days(selected_period):
         return 90
     elif selected_period == '6mo':
         return 180
+    elif selected_period == '9mo':
+        return 270
     elif selected_period == '1y':
         return 365
     elif selected_period == '2y':
@@ -258,42 +292,69 @@ def volume_formatter(x, pos):
 def price_formatter(x, pos):
     return f'{x:,.2f}'
 
+data_needed_days = 1460
 
-async def calculate_and_store_rsi(symbol):
-    """Calculates RSI(3) for the given symbol and stores it in the database."""
+async def calculate_and_store_rsi_cci(symbol):
+    """Calculates RSI3 & RSI14 for the given symbol and stores it in the database."""
 
     # Fetch the last calculated RSI date
     cur.execute("SELECT MAX(date) FROM daily_prices WHERE symbol = %s AND rsi3 IS NOT NULL", (symbol,))
     # last_rsi_date = cur.fetchone()[0]
     end_date = datetime.now().date()
-    last_rsi_date = end_date - timedelta(days=140)
+    last_rsi_date = end_date - timedelta(days=data_needed_days)
     
 
     # Fetch only new data
-    cur.execute("SELECT date, close FROM daily_prices WHERE symbol = %s AND date > %s ORDER BY date", (symbol, last_rsi_date or '1900-01-01'))
+    cur.execute("SELECT date, close, high, low FROM daily_prices WHERE symbol = %s AND date > %s ORDER BY date", (symbol, last_rsi_date or '1900-01-01'))
     rows = cur.fetchall()
 
     if len(rows) < 3:
-        print(f"Not enough new data to calculate RSI(3) for {symbol}")
+        print(f"Not enough new data to calculate RSI3, BBpB and CCIs for {symbol}")
         return
 
-    df = pd.DataFrame(rows, columns=['date', 'close'])
+    df = pd.DataFrame(rows, columns=['date', 'close', 'high', 'low'])
     
-    # Calculate RSI
+    # Calculate RSI and CCI
     rsi_indicator = RSIIndicator(close=df['close'], window=3)
+    rsi_indicator14 = RSIIndicator(close=df['close'], window=14)
     df['rsi3'] = rsi_indicator.rsi()
+    df['rsi14'] = rsi_indicator14.rsi()
+    
+    ### CCI
+    cci = CCIIndicator(high=df['high'], low=df['low'], close=df['close'], window=3, constant=0.015)
+    df['cci3'] = cci.cci()
+    
+    cci12 = CCIIndicator(high=df['high'], low=df['low'], close=df['close'], window=12, constant=0.015)
+    df['cci12'] = cci12.cci()
+    
+    #### stochrsi
+    
+    # Assuming df is your DataFrame
+    stochrsi14 = StochRSIIndicator(close=df['close'], window=14, smooth1=3, smooth2=3)
+    df['stochrsi14'] = stochrsi14.stochrsi()
+    df['stochrsi14_k'] = stochrsi14.stochrsi_k()
+    df['stochrsi14_d'] = stochrsi14.stochrsi_d()
 
+    #### bollingerband %b
+    
+    # Calculate Bollinger Bands
+    bb_indicator = BollingerBands(close=df['close'], window=20, window_dev=2)
+
+    # Add Bollinger Band %B to the dataframe
+    df['bb_percent_b'] = bb_indicator.bollinger_pband()
     # Prepare batch updates
-    updates = [(row['rsi3'], symbol, row['date']) for _, row in df.iterrows() if not pd.isna(row['rsi3'])]
+
+
+    updates = [(row['rsi3'], row['rsi14'], row['cci3'], row['cci12'], row['stochrsi14'], row['stochrsi14_k'], row['stochrsi14_d'], row['bb_percent_b'], symbol, row['date']) for _, row in df.iterrows() if not pd.isna(row['rsi3']) and not pd.isna(row['rsi14']) and not pd.isna(row['cci3']) and not pd.isna(row['cci12']) and not pd.isna(row['stochrsi14']) and not pd.isna(row['stochrsi14_k']) and not pd.isna(row['stochrsi14_d']) ]
 
     # Perform bulk update
     cur.executemany(
-        "UPDATE daily_prices SET rsi3 = %s WHERE symbol = %s AND date = %s",
+        "UPDATE daily_prices SET rsi3 = %s, rsi14 = %s, cci3 = %s, cci12 = %s, stochrsi14 = %s, stochrsi14_k = %s, stochrsi14_d = %s, bb_percent_b = %s  WHERE symbol = %s AND date = %s",
         updates
     )
     conn.commit()
 
-    print(f"RSI(3) calculated and stored for {symbol}")
+    print(f"RSI3,rsi14, CCI3 & 12, StochRSI14, BBpB calculated and stored for {symbol}")
     
 
 async def calculate_and_store_ma(symbol):
@@ -305,7 +366,7 @@ async def calculate_and_store_ma(symbol):
 
     # Fetch only new data
     cur.execute("""
-        SELECT date, close, volume, ma7, ma21, ma63, ma189, mamix14, mamix42, vwma25, volsma5
+        SELECT date, close, volume, ma7, ma10, ma21, ma32, ma43, ma54, ma63, ma189, mamix14, mamix42, vwma25, volsma5, volsma20
         FROM daily_prices
         WHERE symbol = %s AND (date > %s OR %s IS NULL)
         ORDER BY date
@@ -323,7 +384,7 @@ async def calculate_and_store_ma(symbol):
     }, index=dates)
     df = df.fillna(0) 
     # Calculate moving averages
-    for ma in [7, 21, 63, 189]:
+    for ma in [7, 10, 21, 32, 43, 54, 63, 189]:
         df[f'ma{ma}'] = df['close'].rolling(window=ma).mean()
     
     df['mamix14'] = ((df['ma7'] + df['ma21']) / 2).rolling(window=2).mean()
@@ -331,19 +392,25 @@ async def calculate_and_store_ma(symbol):
     df['CloseVolume'] = df['close'] * df['volume']
     df['vwma25'] = df['CloseVolume'].rolling(window=25).sum() / df['volume'].rolling(window=25).sum()
     df['volsma5'] = (df['volume']).rolling(window=5).mean()
+    df['volsma20'] = (df['volume']).rolling(window=20).mean()
     
     # Prepare batch updates
     updates = []
     for date, row in df.iterrows():
         updates.append((
             float(row['ma7']), 
+            float(row['ma10']), 
             float(row['ma21']), 
+            float(row['ma32']), 
+            float(row['ma43']), 
+            float(row['ma54']), 
             float(row['ma63']), 
             float(row['ma189']),
             float(row['mamix14']), 
             float(row['mamix42']), 
             float(row['vwma25']),
             float(row['volsma5']),
+            float(row['volsma20']),
             symbol, date
         ))
         # Cache the data
@@ -365,13 +432,18 @@ async def bulk_update(updates):
     cur.executemany("""
         UPDATE daily_prices
         SET ma7 = COALESCE(%s, ma7), 
+            ma10 = COALESCE(%s, ma10), 
             ma21 = COALESCE(%s, ma21), 
+            ma32 = COALESCE(%s, ma32), 
+            ma43 = COALESCE(%s, ma43), 
+            ma54 = COALESCE(%s, ma54), 
             ma63 = COALESCE(%s, ma63), 
             ma189 = COALESCE(%s, ma189), 
             mamix14 = COALESCE(%s, mamix14), 
             mamix42 = COALESCE(%s, mamix42), 
             vwma25 = COALESCE(%s, vwma25),
-            volsma5 = COALESCE(%s, volsma5)
+            volsma5 = COALESCE(%s, volsma5),
+            volsma20 = COALESCE(%s, volsma20)
         WHERE symbol = %s AND date = %s
     """, updates)
     conn.commit()
@@ -379,38 +451,25 @@ async def bulk_update(updates):
 # Run the function asynchronously
 # asyncio.run(calculate_and_store_ma(symbol))
 
+#############################################???????????????????????????????#############################
 
-def plot_daily_chart(symbol, selected_period):
-    
+def plot_resampled_chart(symbol, selected_period, resample_freq='ME'):
     # Convert period to a format suitable for SQL query
     period_map = {
-        '1d': '1 day',
-        '5d': '5 days',
-        '1mo': '1 month',
-        '3mo': '3 months',
-        '6mo': '6 months',
-        '1y': '1 year',
-        '2y': '2 years',
-        '3y': '3 years',
-        '4y': '4 years',
-        '5y': '5 years',
-        '6y': '6 years',
-        '7y': '7 years',
-        '8y': '8 years',
-        '9y': '9 years',
-        '10y': '10 years',
-        'max': '100 years'  # Assuming max means as much data as possible
+        '1mo': '1 month', '3mo': '3 months', '6mo': '6 months', '9mo': '9 months',
+        '1y': '1 year', '2y': '2 years', '3y': '3 years', '4y': '4 years',
+        '5y': '5 years', '6y': '6 years', '7y': '7 years', '8y': '8 years',
+        '9y': '9 years', '10y': '10 years', 'max': '100 years'
     }
     sql_period = period_map.get(selected_period)
-    
-    
 
-    cur.execute("SELECT date, open, high, low, close, volume, rsi3,  ma7, ma21, ma63, ma189, mamix14, mamix42, vwma25, traderule1, traderule2, traderule3, traderule4, traderule5, traderule6, volsma5  FROM daily_prices WHERE symbol = %s AND date >= NOW() - INTERVAL %s ORDER BY date", (symbol, sql_period))
+    # Fetch data from database
+    cur.execute("SELECT date, open, high, low, close, volume, rsi3, ma7, ma21, ma63, ma189, mamix14, mamix42, vwma25, traderule1, traderule2, traderule3, traderule4, traderule5, traderule6, traderule7, traderule8, volsma5, volsma20, cci3, cci12, bb_percent_b, rsi14, traderule9, traderule10  FROM daily_prices WHERE symbol = %s AND date >= NOW() - INTERVAL %s ORDER BY date", (symbol, sql_period))
     
     rows = cur.fetchall()
     if not rows:
         fetch_data_from_db(symbol, selected_period)
-        cur.execute("SELECT date, open, high, low, close, volume, rsi3,  ma7, ma21, ma63, ma189, mamix14, mamix42, vwma25, traderule1, traderule2, traderule3, traderule4, traderule5, traderule6, volsma5  FROM daily_prices WHERE symbol = %s AND date >= NOW() - INTERVAL %s ORDER BY date", (symbol, sql_period))
+        cur.execute("SELECT date, open, high, low, close, volume, rsi3, ma7, ma21, ma63, ma189, mamix14, mamix42, vwma25, traderule1, traderule2, traderule3, traderule4, traderule5, traderule6, traderule7, traderule8, volsma5, volsma20, cci3, cci12, bb_percent_b, rsi14, traderule9, traderule10  FROM daily_prices WHERE symbol = %s AND date >= NOW() - INTERVAL %s ORDER BY date", (symbol, sql_period))
         rows = cur.fetchall()
     
     
@@ -436,74 +495,166 @@ def plot_daily_chart(symbol, selected_period):
         'traderule4':[row[17] for row in rows],
         'traderule5':[row[18] for row in rows],
         'traderule6':[row[19] for row in rows],
-        'volsma5':[row[20] for row in rows]
-        
+        'traderule7':[row[20] for row in rows],
+        'traderule8':[row[21] for row in rows],
+        'volsma5':[row[22] for row in rows],
+        'volsma20':[row[23] for row in rows],
+        'cci3':[row[24] for row in rows],
+        'cci12':[row[25] for row in rows],
+        'bb_percent_b':[row[26] for row in rows],
+        'rsi14':[row[27] for row in rows],
+        'traderule9':[row[28] for row in rows],
+        'traderule10':[row[29] for row in rows]
+
         
         
     }
-    
     
     df = pd.DataFrame(data)
     df.set_index('Date', inplace=True)
     df.index = df.index.astype(str)
     df.index = pd.to_datetime(df.index)  # Ensure the index is a DatetimeIndex
-        
-    if not df.empty:
-        latest_data = df.iloc[-1]
-        prev_close = df.iloc[-2]['Close'] if len(df) > 1 else 0  # Handle the case where there's no previous data
-        percent_change = ((latest_data['Close'] - prev_close) / prev_close) * 100 if prev_close != 0 else 0  # Avoid division by zero
+    
+    
+    
+    # Define resampling rules
+    resample_dict = {
+        'Open': 'first',
+        'High': 'max',
+        'Low': 'min',
+        'Close': 'last',
+        'Volume': 'sum',
+        'rsi3': 'last',
+        'ma7': 'last',
+        'ma21': 'last',
+        'ma63': 'last',
+        'ma189': 'last',
+        'mamix14': 'last',
+        'mamix42': 'last',
+        'vwma25': 'last',
+        'traderule1': 'last',
+        'traderule2': 'last',
+        'traderule3': 'last',
+        'traderule4': 'last',
+        'traderule5': 'last',
+        'traderule6': 'last',
+        'traderule7': 'last',
+        'traderule8': 'last',
+        'volsma5': 'last',
+        'volsma20': 'last',
+        'cci3': 'last',
+        'cci12': 'last',
+        'bb_percent_b': 'last',
+        'rsi14': 'last',
+        'traderule9': 'last',
+        'traderule10': 'last'
+    }
+
+    
+    ##### Tradingview Technical Analysis Recomendation.
+    # clean_symbol = watchlist.get(watchlist.curselection()).replace(".NS", "")
+    # print(clean_symbol)
+    # ta_symbol = TA_Handler( symbol=clean_symbol, screener="india", exchange="NSE", interval=Interval.INTERVAL_1_DAY) 
+    # print(ta_symbol.get_analysis().summary)['RECOMMENDATION']
+    # recommend = ta_symbol.get_analysis().summary
+    # ta_symbol.get_analysis().summary# Resample data only if necessary
+    if resample_freq != 'D':
+        resampled_df = df.resample(resample_freq).agg(resample_dict)
+    else:
+        resampled_df = df  # Use the original daily data
+
+    if not resampled_df.empty:
+        latest_data = resampled_df.iloc[-1]
+        prev_close = resampled_df.iloc[-2]['Close'] if len(resampled_df) > 1 else 0
+        percent_change = ((latest_data['Close'] - prev_close) / prev_close) * 100 if prev_close != 0 else 0
         latest_info = (
+            f"TF:  {resample_freq}, "
             f"Date: {latest_data.name.strftime('%b %d %Y')}, "
             f"Open: {latest_data['Open']:.2f}, "
             f"High: {latest_data['High']:.2f}, "
             f"Low: {latest_data['Low']:.2f}, "
             f"Close: {latest_data['Close']:.2f}, "
-            f"RSI3: {latest_data['rsi3']:.2f}, "
-            f"Chg: {percent_change:.2f}%"
+            f"Chg: {percent_change:.2f}% , "
+            # f"Recommendation: {recommend['RECOMMENDATION']}"
         )
     else:
         latest_info = "No data available"
-    
+
     #these lines are highlighting the Low values in your DataFrame where each respective trading rule is met, 
     # and setting the value to NaN where the rule is not met.
     ### to plot on low of the candle .. we are collecting lows
-    df['traderule1_highlight'] = np.where(df['traderule1'], df['Low'] * 0.999, np.nan)
-    df['traderule2_highlight'] = np.where(df['traderule2'], df['Low'] * 0.999, np.nan)
-    df['traderule3_highlight'] = np.where(df['traderule3'], df['Low'] * 0.999, np.nan)
-    df['traderule4_highlight'] = np.where(df['traderule4'], df['Low'] * 0.999, np.nan)
-    df['traderule5_highlight'] = np.where(df['traderule5'], df['Low'] * 0.999, np.nan)
-    df['traderule6_highlight'] = np.where(df['traderule6'], df['Low'] * 0.999, np.nan)
+    resampled_df['traderule1_highlight'] = np.where(resampled_df['traderule1'], resampled_df['Low'] * 0.999, np.nan)
+    resampled_df['traderule2_highlight'] = np.where(resampled_df['traderule2'], resampled_df['Low'] * 0.999, np.nan)
+    resampled_df['traderule3_highlight'] = np.where(resampled_df['traderule3'], resampled_df['Low'] * 0.999, np.nan)
+    resampled_df['traderule4_highlight'] = np.where(resampled_df['traderule4'], resampled_df['Low'] * 0.999, np.nan)
+    resampled_df['traderule5_highlight'] = np.where(resampled_df['traderule5'], resampled_df['Low'] * 0.995, np.nan)
+    resampled_df['traderule6_highlight'] = np.where(resampled_df['traderule6'], resampled_df['Low'] * 0.990, np.nan)
+    resampled_df['traderule7_highlight'] = np.where(resampled_df['traderule7'], resampled_df['Low'] * 0.985, np.nan)
+    resampled_df['traderule8_highlight'] = np.where(resampled_df['traderule8'], resampled_df['Low'] * 0.980, np.nan)
+    resampled_df['traderule9_highlight'] = np.where(resampled_df['traderule9'], resampled_df['Low'] * 0.975, np.nan)
+    resampled_df['traderule10_highlight'] = np.where(resampled_df['traderule10'], resampled_df['Low'] * 0.970, np.nan)
     
-    # df['traderule3_highlight'] = np.where(df['traderule3'], df['Low'] * 1.05, np.nan) # to add 5%
-    # df['traderule3_highlight'] = np.where(df['traderule3'], df['Low'] * 0.95, np.nan) # to minus 5%
+    # resampled_df['traderule3_highlight'] = np.where(resampled_df['traderule3'], resampled_df['Low'] * 1.05, np.nan) # to add 5%
+    # resampled_df['traderule3_highlight'] = np.where(resampled_df['traderule3'], resampled_df['Low'] * 0.95, np.nan) # to minus 5%
     
-    df['traderule3_high'] = np.where(df['traderule3'], df['High'], np.nan) # to plot a line taking high
-    df['traderule3_low'] = np.where(df['traderule3'], df['Low'], np.nan) # to plot a line taking high
-    df['traderule4_high'] = np.where(df['traderule4'], df['High'], np.nan) # to plot a line taking high
-    df['traderule4_low'] = np.where(df['traderule4'], df['Low'], np.nan) # to plot a line taking high
-    df['traderule5_high'] = np.where(df['traderule5'], df['High'], np.nan) # to plot a line taking high
-    df['traderule5_low'] = np.where(df['traderule5'], df['Low'], np.nan) # to plot a line taking high
+    resampled_df['traderule3_high'] = np.where(resampled_df['traderule3'], resampled_df['High'], np.nan) # to plot a line taking high
+    resampled_df['traderule3_low'] = np.where(resampled_df['traderule3'], resampled_df['Low'], np.nan) # to plot a line taking high
+    resampled_df['traderule4_high'] = np.where(resampled_df['traderule4'], resampled_df['High'], np.nan) # to plot a line taking high
+    resampled_df['traderule4_low'] = np.where(resampled_df['traderule4'], resampled_df['Low'], np.nan) # to plot a line taking high
+    resampled_df['traderule5_high'] = np.where(resampled_df['traderule5'], resampled_df['High'], np.nan) # to plot a line taking high
+    resampled_df['traderule5_low'] = np.where(resampled_df['traderule5'], resampled_df['Low'], np.nan) # to plot a line taking high
+    resampled_df['traderule7_high'] = np.where(resampled_df['traderule7'], resampled_df['High'], np.nan) # to plot a line taking high
+    resampled_df['traderule7_low'] = np.where(resampled_df['traderule7'], resampled_df['Low'], np.nan) # to plot a line taking high
+    resampled_df['traderule8_high'] = np.where(resampled_df['traderule8'], resampled_df['Low'] + (resampled_df['High'] - resampled_df['Low']) * 0.3, np.nan) # to plot a line taking a value below hl2 and above 30% of candle.
+    resampled_df['traderule8_low'] = np.where(resampled_df['traderule8'], resampled_df['Low'], np.nan) # to plot a line taking high
+    resampled_df['traderule9_high'] = np.where(resampled_df['traderule9'], resampled_df['Low'] + (resampled_df['High'] - resampled_df['Low']) * 0.3, np.nan) # to plot a line taking a value below hl2 and above 30% of candle.
+    resampled_df['traderule9_low'] = np.where(resampled_df['traderule9'], resampled_df['Low'], np.nan) # to plot a line taking high
+    resampled_df['traderule10_high'] = np.where(resampled_df['traderule10'], resampled_df['High'], np.nan) # to plot a line taking high
+    resampled_df['traderule10_low'] = np.where(resampled_df['traderule10'], resampled_df['Low'], np.nan) # to plot a line taking high
     
     
-    traderule3_high = df['traderule3_high'].dropna()
-    traderule3_low = df['traderule3_low'].dropna()
-    traderule4_high = df['traderule4_high'].dropna()
-    traderule4_low = df['traderule4_low'].dropna()
-    traderule5_high = df['traderule5_high'].dropna()
-    traderule5_low = df['traderule5_low'].dropna()
+    traderule3_high = resampled_df['traderule3_high'].dropna()
+    traderule3_low = resampled_df['traderule3_low'].dropna()
+    traderule4_high = resampled_df['traderule4_high'].dropna()
+    traderule4_low = resampled_df['traderule4_low'].dropna()
+    traderule5_high = resampled_df['traderule5_high'].dropna()
+    traderule5_low = resampled_df['traderule5_low'].dropna()
+    traderule7_high = resampled_df['traderule7_high'].dropna()
+    traderule7_low = resampled_df['traderule7_low'].dropna()
+    
+    ## Traderule 8 is high probable to taking these values and ploting on chart.
+    traderule8_high_values = resampled_df['traderule8_high'].dropna()
+    traderule8_low_values = resampled_df['traderule8_low'].dropna()
     
     # I am collecting the high and low values of traderules only if more than one rule is met. To plot lines below.
     
-    df['highlight_high'] = np.where((df[['traderule1', 'traderule2', 'traderule3', 'traderule4', 'traderule5', 'traderule6']].sum(axis=1) > 1), df['High'], np.nan)
-    df['highlight_low'] = np.where((df[['traderule1', 'traderule2', 'traderule3', 'traderule4', 'traderule5', 'traderule6']].sum(axis=1) > 1), df['Low'], np.nan)
+    # To complare all traderules taking them in variable. Add the traderules as you add new ones
+    traderule_columns = resampled_df[['traderule1', 'traderule2', 'traderule3', 'traderule4', 'traderule5', 'traderule6', 'traderule7', 'traderule8', 'traderule9', 'traderule10']]
+
+    # Use the variable in your np.where condition
+    resampled_df['highlight2_high'] = np.where((traderule_columns.sum(axis=1) > 2) & (traderule_columns.sum(axis=1) < 4), resampled_df['High'], np.nan)
+    resampled_df['highlight2_low'] = np.where((traderule_columns.sum(axis=1) > 2) & (traderule_columns.sum(axis=1) < 4), resampled_df['Low'], np.nan)
     
-    highlight_high_values = df['highlight_high'].dropna()
-    highlight_low_values = df['highlight_low'].dropna()
+    highlight2_high_values = resampled_df['highlight2_high'].dropna()
+    highlight2_low_values = resampled_df['highlight2_low'].dropna()
+    
+    resampled_df['highlight3_high'] = np.where((traderule_columns.sum(axis=1) >= 4) & (traderule_columns.sum(axis=1) < 6), resampled_df['High'], np.nan)
+    resampled_df['highlight3_low'] = np.where((traderule_columns.sum(axis=1) >= 4) & (traderule_columns.sum(axis=1) < 6), resampled_df['Low'], np.nan)
+    
+    
+    highlight3_high_values = resampled_df['highlight3_high'].dropna()
+    highlight3_low_values = resampled_df['highlight3_low'].dropna()
+    
+    resampled_df['highlight5_high'] = np.where((traderule_columns.sum(axis=1) >= 6) & (traderule_columns.sum(axis=1) < 10), resampled_df['High'], np.nan)
+    resampled_df['highlight5_low'] = np.where((traderule_columns.sum(axis=1) >= 6) & (traderule_columns.sum(axis=1) < 10), resampled_df['Low'], np.nan)
+    
+    highlight5_high_values = resampled_df['highlight5_high'].dropna()
+    highlight5_low_values = resampled_df['highlight5_low'].dropna()
     
     # if not traderule3_high.empty:
     #     addplot = []
     #     for value in traderule3_high:
-    #         addplot.append(mpf.make_addplot([value]*len(df), ax=ax1, color='#7572f1', linestyle='--'))
+    #         addplot.append(mpf.make_addplot([value]*len(resampled_df), ax=ax1, color='#7572f1', linestyle='--'))
     
     fig.clear()
     
@@ -517,107 +668,230 @@ def plot_daily_chart(symbol, selected_period):
     ax3 = fig.add_subplot(4, 1, 3, sharex=ax1)
     ax4 = fig.add_subplot(4, 1, 4, sharex=ax1)
     
+    AXS_BG_Color = '#000000ff'
     
-    
-    ax1.set_facecolor('#000000ff') 
-    ax2.set_facecolor('#000000ff')
-    ax3.set_facecolor('#000000ff')
-    ax4.set_facecolor('#000000ff')
+    ax1.set_facecolor(AXS_BG_Color) 
+    ax2.set_facecolor(AXS_BG_Color)
+    ax3.set_facecolor(AXS_BG_Color)
+    ax4.set_facecolor(AXS_BG_Color)
     
     
     addplot = [
-        # mpf.make_addplot(df['ma7'], ax=ax1, color='red'),
-        # mpf.make_addplot(df['ma21'], ax=ax1, color='black'),
-        # mpf.make_addplot(df['ma63'], ax=ax1, color='green'),
-        mpf.make_addplot(df['traderule1_highlight'], ax=ax1, type='scatter', markersize=100, marker='s', color='#bcf5bc'), # working code
-        mpf.make_addplot(df['traderule2_highlight'], ax=ax1,  type='scatter', markersize=100, marker='^', color='#1e90ff'), # working code
-        mpf.make_addplot(df['traderule3_highlight'], ax=ax1,  type='scatter', markersize=100, marker='s', color='#7572f1'), # working code
-        mpf.make_addplot(df['traderule4_highlight'], ax=ax1, type='scatter', markersize=100, marker='d', color='#ff00ff'),  # New color for traderule4
-        mpf.make_addplot(df['traderule5_highlight'], ax=ax1, type='scatter', markersize=100, marker='^', color='#067887'),  # New color for traderule4
-        mpf.make_addplot(df['traderule6_highlight'], ax=ax1, type='scatter', markersize=100, marker='^', color='#007117'),  # New color for traderule4
+        # mpf.make_addplot(resampled_df['ma7'], ax=ax1, color='red'),
+        # mpf.make_addplot(resampled_df['ma21'], ax=ax1, color='black'),
+        # mpf.make_addplot(resampled_df['ma63'], ax=ax1, color='green'),
+        mpf.make_addplot(resampled_df['traderule1_highlight'], ax=ax1, type='scatter', markersize=100, marker='s', color='#bcf5bc'), # working code
+        mpf.make_addplot(resampled_df['traderule2_highlight'], ax=ax1,  type='scatter', markersize=100, marker='^', color='#1e90ff'), # working code
+        mpf.make_addplot(resampled_df['traderule3_highlight'], ax=ax1,  type='scatter', markersize=100, marker='s', color='#7572f1'), # working code
+        mpf.make_addplot(resampled_df['traderule4_highlight'], ax=ax1, type='scatter', markersize=100, marker='d', color='#ff00ff'),  # New color for traderule4
+        mpf.make_addplot(resampled_df['traderule5_highlight'], ax=ax1, type='scatter', markersize=100, marker='^', color='#067887'),  # New color for traderule5
+        mpf.make_addplot(resampled_df['traderule6_highlight'], ax=ax1, type='scatter', markersize=100, marker='^', color='#007117'),  # New color for traderule6
+        mpf.make_addplot(resampled_df['traderule7_highlight'], ax=ax1, type='scatter', markersize=100, marker='*', color='#fff000'),  # New color for traderule7
+        mpf.make_addplot(resampled_df['traderule8_highlight'], ax=ax1, type='scatter', markersize=100, marker='*', color='#0fff00'),  # New color for traderule8
+        mpf.make_addplot(resampled_df['traderule9_highlight'], ax=ax1, type='scatter', markersize=50, marker='x', color='#000fff'),  # New color for traderule9
+        mpf.make_addplot(resampled_df['traderule10_highlight'], ax=ax1, type='scatter', markersize=100, marker='1', color='#00fff0'),  # New color for traderule10
         
-        # mpf.make_addplot([horizontal_line]*len(df), ax=ax1, color='#7572f1', linestyle='--') working code for only one time occurance
+        # mpf.make_addplot([horizontal_line]*len(resampled_df), ax=ax1, color='#7572f1', linestyle='--') working code for only one time occurance
 
     ]
     
-    show_ma189 = True
+    
+    ################################################################################################################
+    ########################################################## Working Code below #################################################
+
+    # Define your market colors
+    mcgreen = mpf.make_marketcolors(base_mpf_style='yahoo', up='limegreen', down='yellow', ohlc='limegreen', edge='inherit', wick='inherit')
+    style = mpf.make_mpf_style(marketcolors=mcgreen)
+
+    # Define volume conditions
+    VolumeUpCondition = (resampled_df['Volume'] > resampled_df['Volume'].rolling(window=20).mean() * 1.5) & (resampled_df['Close'] > resampled_df['Open'])
+    VolumeDownCondition = (resampled_df['Volume'] > resampled_df['Volume'].rolling(window=20).mean() * 1.5) & (resampled_df['Close'] <= resampled_df['Open'])
+
+    # Initialize an empty DataFrame to store the candles to be plotted
+    new_resampled_df = resampled_df.copy()
+    new_resampled_df.loc[~(VolumeUpCondition | VolumeDownCondition), ['Open', 'High', 'Low', 'Close']] = new_resampled_df.loc[VolumeUpCondition | VolumeDownCondition, ['Open', 'High', 'Low', 'Close']].ffill()
+
+    
+    # Define the length of the trend triangle
+    triangle_len = triangle_length_var.get() + 1
+
+    def create_trend_line_data(resampled_df, condition_index, is_up_condition):
+        today_high = resampled_df.loc[condition_index, 'High']
+        today_low = resampled_df.loc[condition_index, 'Low']
+        initial_diff = today_high - today_low
+        
+        end_date = min(condition_index + pd.Timedelta(days=triangle_len), resampled_df.index[-1])
+        date_range = (end_date - condition_index).days + 1
+        step_size = 1 / date_range
+        
+        trend_high = []
+        trend_low = []
+        
+        for i in range(date_range):
+            current_date = condition_index + pd.Timedelta(days=i)
+            if current_date <= resampled_df.index[-1]:
+                if is_up_condition:
+                    new_high = today_high - (initial_diff * step_size * i)
+                    new_low = today_low  # Keeping low constant
+                else:
+                    new_high = today_high  # Keeping high constant
+                    new_low = today_low + (initial_diff * step_size * i)
+                trend_high.append(new_high)
+                trend_low.append(new_low)
+            else:
+                trend_high.append(np.nan)
+                trend_low.append(np.nan)
+
+        return trend_high, trend_low
+
+    # Find the indices where the volume conditions are True
+    up_condition_indices = resampled_df.index[VolumeUpCondition].tolist()
+    down_condition_indices = resampled_df.index[VolumeDownCondition].tolist()
+
+    # Create trend line data for up conditions
+    trend_highs_up = pd.DataFrame(index=resampled_df.index, columns=[f'TrendHighUp_{i}' for i in range(len(up_condition_indices))])
+    trend_lows_up = pd.DataFrame(index=resampled_df.index, columns=[f'TrendLowUp_{i}' for i in range(len(up_condition_indices))])
+
+    for i, idx in enumerate(up_condition_indices):
+        high, low = create_trend_line_data(resampled_df, idx, is_up_condition=True)
+        start_idx = resampled_df.index.get_loc(idx)
+        end_idx = min(start_idx + triangle_len, len(resampled_df))
+        trend_highs_up.iloc[start_idx:end_idx, i] = high[:end_idx-start_idx]
+        trend_lows_up.iloc[start_idx:end_idx, i] = low[:end_idx-start_idx]
+
+        addplot.append(mpf.make_addplot(trend_highs_up[f'TrendHighUp_{i}'], color='#ad0afd', linestyle='--', ax=ax1, alpha=1))
+        addplot.append(mpf.make_addplot(trend_lows_up[f'TrendLowUp_{i}'], color='#0bf77d', linestyle='--', ax=ax1, alpha=1))
+
+    # Create trend line data for down conditions
+    trend_highs_down = pd.DataFrame(index=resampled_df.index, columns=[f'TrendHighDown_{i}' for i in range(len(down_condition_indices))])
+    trend_lows_down = pd.DataFrame(index=resampled_df.index, columns=[f'TrendLowDown_{i}' for i in range(len(down_condition_indices))])
+
+    for i, idx in enumerate(down_condition_indices):
+        high, low = create_trend_line_data(resampled_df, idx, is_up_condition=False)
+        start_idx = resampled_df.index.get_loc(idx)
+        end_idx = min(start_idx + triangle_len, len(resampled_df))
+        trend_highs_down.iloc[start_idx:end_idx, i] = high[:end_idx-start_idx]
+        trend_lows_down.iloc[start_idx:end_idx, i] = low[:end_idx-start_idx]
+
+        addplot.append(mpf.make_addplot(trend_highs_down[f'TrendHighDown_{i}'], color='#de0c62', linestyle='--', ax=ax1, alpha=1))
+        addplot.append(mpf.make_addplot(trend_lows_down[f'TrendLowDown_{i}'], color='#08ff08', linestyle='--', ax=ax1, alpha=1))
+    
+    #################################################################################################################
+    
+    
+    show_ma189 = False
     show_mamix14 = True
     show_mamix42 = True
     show_vwma25 = True
     show_volsma5 = True
     show_rsi3 = True
-    
+    show_rsi14 = True
+    show_cci3 = True
+    show_cci12 = True
+    show_volume_candle = True
+    show_trendlines = True
     ### RSI SEttings
     
-    overbought_mask = df['rsi3'] > 60
-    oversold_mask = df['rsi3'] < 40
+    rsi_overbought_mask = resampled_df['rsi3'] > 60
+    rsi_oversold_mask = resampled_df['rsi3'] < 40
+    cci_overbought_mask = resampled_df['cci3'] > 50
+    cci_oversold_mask = resampled_df['cci3'] < -50
+    
     
     if show_ma189:
-        addplot.append(mpf.make_addplot(df['ma189'], ax=ax1, color='purple', width=0.5))
+        addplot.append(mpf.make_addplot(resampled_df['ma189'], ax=ax1, color='purple', width=0.5))
     if show_mamix14:        
-        addplot.append(mpf.make_addplot(df['mamix14'], ax=ax1, color='blue')),
+        addplot.append(mpf.make_addplot(resampled_df['mamix14'], ax=ax1, color='blue')),
     if show_mamix42:    
-        addplot.append(mpf.make_addplot(df['mamix42'], ax=ax1, color='red', width=0.5)),
+        addplot.append(mpf.make_addplot(resampled_df['mamix42'], ax=ax1, color='red', width=0.5)),
     if show_vwma25:
-        addplot.append(mpf.make_addplot(df['vwma25'], ax=ax1, color='#37B7C3')),
+        addplot.append(mpf.make_addplot(resampled_df['vwma25'], ax=ax1, color='#37B7C3')),
     if show_volsma5:
-        addplot.append(mpf.make_addplot(df['volsma5'], ax=ax2, color='#ff00ff')),
+        addplot.append(mpf.make_addplot(resampled_df['volsma5'], ax=ax2, color='#ff00ff')),
     if show_rsi3:
-        addplot.append(mpf.make_addplot(df['rsi3'], ax=ax3, color='#1e90ff'))
-        addplot.append(mpf.make_addplot(df['rsi3'].where(overbought_mask), ax=ax3, color='green', fill_between={'y1': 60, 'y2': 100, 'alpha': 0.3}))
-        addplot.append(mpf.make_addplot(df['rsi3'].where(oversold_mask), ax=ax3, color='red', fill_between={'y1': 0, 'y2': 40, 'alpha': 0.3}))
+        addplot.append(mpf.make_addplot(resampled_df['rsi3'], ax=ax3, color='#1e90ff'))
+        addplot.append(mpf.make_addplot(resampled_df['rsi3'].where(rsi_overbought_mask), ax=ax3, color='green', fill_between={'y1': 60, 'y2': 100, 'alpha': 0.3}))
+        addplot.append(mpf.make_addplot(resampled_df['rsi3'].where(rsi_oversold_mask), ax=ax3, color='red', fill_between={'y1': 0, 'y2': 40, 'alpha': 0.3}))
+    if show_rsi14:
+        addplot.append(mpf.make_addplot(resampled_df['rsi14'], ax=ax3, color='#2f01ee'))
+    if show_cci3:
+        addplot.append(mpf.make_addplot(resampled_df['cci3'], ax=ax4, color='#1e90ff'))
+        addplot.append(mpf.make_addplot(resampled_df['cci3'].where(cci_overbought_mask), ax=ax4, color='green', fill_between={'y1': 50, 'y2': 100, 'alpha': 0.3}))
+        addplot.append(mpf.make_addplot(resampled_df['cci3'].where(cci_oversold_mask), ax=ax4, color='red', fill_between={'y1': -100, 'y2': -50, 'alpha': 0.3}))
+    if show_cci12:
+        addplot.append(mpf.make_addplot(resampled_df['cci12'], ax=ax4, color='#6600ee'))
+    if show_volume_candle:# Check if there are any rows that meet the condition
+        if not new_resampled_df.empty:
+            addplot.append(mpf.make_addplot(new_resampled_df[['Open', 'High', 'Low', 'Close', 'Volume']], ax=ax1, type='candle', marketcolors=mcgreen))
+
+    
+            
+    
+    
+    
+    
+    ################################## main plot dont delete #########################################################################
+    # mpf.plot(resampled_df, type='candle', style=samie_style_obj, ax=ax1, volume=ax2, datetime_format='%b %d', addplot=addplot) # working code
+    mpf.plot(resampled_df, type='candle', style=samie_style_obj, ax=ax1, volume=ax2, datetime_format='%m-%d', addplot=addplot, returnfig=True)
+    ##################################################################################################################################
 
 
+    # Create a custom cursor
+    cursor = mplcursors.cursor(ax1, hover=True)
+
+    # Function to find the nearest candle
+    def find_nearest_candle(sel):
+        x, y = sel.target
+        # Convert x from float to nearest index
+        index = int(round(x))
+        return index, resampled_df.iloc[index]
+
+    # Custom picking function
+    def custom_pick(artist, mouseevent):
+        if isinstance(artist, plt.Rectangle):
+            mouse_x = mouseevent.xdata
+            candle_index = int(round(mouse_x))
+            return True, {'index': candle_index}
+        return False, {}
+
+    # Modified tooltip function
+    def custom_tooltip(sel):
+        index, row = find_nearest_candle(sel)
         
+        open_price = row['Open']
+        high_price = row['High']
+        low_price = row['Low']
+        close_price = row['Close']
+        date = row.name
+        
+        prev_close = resampled_df['Close'].iloc[index-1] if index > 0 else open_price
+        pct_chg = ((close_price - prev_close) / prev_close) * 100 if prev_close != 0 else 0
+        
+        sel.annotation.set_text(
+            f"Date: {date.strftime('%Y-%m-%d')}\n"
+            f"Open: {open_price:.2f}\n"
+            f"High: {high_price:.2f}\n"
+            f"Low: {low_price:.2f}\n"
+            f"Close: {close_price:.2f}\n"
+            f"Chg: {pct_chg:.2f}%"
+        )
+        sel.annotation.get_bbox_patch().set_facecolor("lightgray")
+        sel.annotation.get_bbox_patch().set_alpha(0.7)
+        sel.annotation.set_fontsize(10)
+        sel.annotation.get_bbox_patch().set_edgecolor("darkgray")
+        sel.annotation.get_bbox_patch().set_linewidth(1)
+        sel.annotation.set_zorder(1000)
+
+    # Set the custom picking function
+    ax1.figure.canvas.mpl_connect('pick_event', lambda event: custom_pick(event.artist, event.mouseevent))
+
+    # Connect the modified tooltip function
+    cursor.connect("add", custom_tooltip)
+
+
 
     
-    # def on_click(event):
-    #     if event.inaxes == ax2:
-    #         date = mdates.num2date(event.xdata).strftime('%Y-%m-%d')
-    #         price = event.ydata
-    #         print(f"Selected: Date = {date}, Price = {price:.2f}")
-
-    # selected_line = ax2.axvline(color='r', linestyle='--', linewidth=1)
-
-    # def on_click(event):
-    #     if event.inaxes == ax2:
-    #         date = mdates.num2date(event.xdata).strftime('%Y-%m-%d')
-    #         price = event.ydata
-    #         print(f"Selected: Date = {date}, Price = {price:.2f}")
-    #         selected_line.set_xdata(event.xdata)
-    #         fig.canvas.draw()
-    # fig.canvas.mpl_connect('button_press_event', on_click)
-    
-    # mpf.plot(df, type='candle', style=samie_style_obj, ax=ax1, volume=ax2, datetime_format='%b %d', addplot=addplot) # working code
-    mpf.plot(df, type='candle', style=samie_style_obj, ax=ax1, volume=ax2, datetime_format='%m-%d', addplot=addplot, returnfig=True)
-    
-    ###########/////////////////////// Fix this code ///////////////#######################
-    # Define a custom tooltip function
-    # def custom_tooltip(sel):
-    #     # Get the x-coordinate of the selected point, which should correspond to the date
-    #     x_data = sel.target.index
-    #     # Convert x_data to a datetime object if necessary, depending on your DataFrame's index type
-    #     selected_date = df.index[x_data]  # Adjust if your x_data is in a different format
-    #     close_price = df.loc[selected_date, 'Close']
-    #     # Customize the tooltip text
-    #     sel.annotation.set_text(f"Date: {selected_date.strftime('%Y-%m-%d')}\nClose: {close_price:.2f}")
-    #     sel.annotation.get_bbox_patch().set_facecolor("lightgray")
-    #     sel.annotation.get_bbox_patch().set_alpha(0.7)
-    #     sel.annotation.set_color("black")
-    #     sel.annotation.set_fontsize(12)
-    #     sel.annotation.get_bbox_patch().set_edgecolor("darkgray")
-    #     sel.annotation.get_bbox_patch().set_linewidth(1)
-    #     sel.annotation.set_zorder(1000)  # Ensure tooltip is on top
-    #     sel.annotation.set_visible(True)  # Ensure the annotation is visible
-
-    #     # Your existing code to finalize the plot
-
-    # # Add this line after plotting to enable mplcursors
-    # mplcursors.cursor(ax1, hover=True).connect("add", custom_tooltip)
-
-    
-
-
+#####################################################################################################################
     ax1.set_title(f' {selected_period} :  {latest_info}', loc='left',  fontsize=10, color='dodgerblue', y=1)
     # ax1.set_ylabel('Price')
     ax1.grid(axis='both', which='both', linestyle='-.', linewidth=0.3, color='#31363F')
@@ -626,13 +900,15 @@ def plot_daily_chart(symbol, selected_period):
     ax4.grid(axis='both', which='both', linestyle='-.', linewidth=0.3, color='#31363F')
     
     ax1.tick_params(axis='y', colors='dodgerblue')
+    ax2.tick_params(axis='y', colors='dodgerblue')
+    ax3.tick_params(axis='y', colors='dodgerblue')
     ax4.tick_params(axis='y', colors='dodgerblue')
     ax4.tick_params(axis='x', colors='dodgerblue')
     
     # Enhanced Gridlines for ax1 (Price Chart)
     # ax1.grid(True, which='both', linestyle='--', linewidth=0.5, color='gray')  # Major and minor grids for ax1
     
-    data_range = df['Close'].max() - df['Close'].min()
+    data_range = resampled_df['Close'].max() - resampled_df['Close'].min()
     # tick_interval = data_range * 0.05  # 5% of the data range
     
     def round_to_nearest_five_paisa(value):
@@ -644,12 +920,12 @@ def plot_daily_chart(symbol, selected_period):
     # rounded_tick_interval = round_to_nearest_five_cents(tick_interval)
     # print(rounded_tick_interval)
 
-    tick_interval = data_range * 0.10  # 10% of the data range
+    tick_interval = data_range * 0.033  # 3.3% of the data range
     rounded_tick_interval = round_to_nearest_five_paisa(tick_interval)
     
     # Set y-axis major ticks at every 5% of the data range
     ax1.yaxis.set_major_locator(ticker.MultipleLocator(rounded_tick_interval))
-    # ax1.set_ylim([df['Low'].min(), df['High'].max()])  # working code.. sets you graph to max and min values
+    # ax1.set_ylim([resampled_df['Low'].min(), resampled_df['High'].max()])  # working code.. sets you graph to max and min values
     
     # Set the title on the primary axes to include the symbol name
     # ax1.set_title(f'{symbol} Stock Price ({selected_period})', loc='center', fontsize=16, fontweight='bold')
@@ -664,7 +940,7 @@ def plot_daily_chart(symbol, selected_period):
     #     #     ax1.axhline(y=value * 0.95, color='#ff000f', linestyle='--')          ### working code
     #     for value  in traderule3_low:
     #         ax1.axhline(y=value * 0.98, color='#ff000f', linestyle=':')
-    #         ax1.text(df.index[-1], value * 0.98, f'{value:.2f}', va='center', ha='left', 
+    #         ax1.text(resampled_df.index[-1], value * 0.98, f'{value:.2f}', va='center', ha='left', 
     #             bbox=dict(facecolor='#0042a1', edgecolor='black', alpha=0.7, boxstyle='round,pad=0.5'))
                 
     # if not traderule4_high.empty:
@@ -676,7 +952,7 @@ def plot_daily_chart(symbol, selected_period):
     #     #     ax1.axhline(y=value * 0.95, color='#fabfab', linestyle='--')          ### working code
     #     for value  in traderule4_low:
     #         ax1.axhline(y=value * 0.98, color='#fabcfabc', linestyle='--')
-    #         ax1.text(df.index[-1], value * 0.98, f'{value:.2f}', va='center', ha='left', 
+    #         ax1.text(resampled_df.index[-1], value * 0.98, f'{value:.2f}', va='center', ha='left', 
     #             bbox=dict(facecolor='#7572f1', edgecolor='black', alpha=0.7))
                 
 
@@ -685,14 +961,43 @@ def plot_daily_chart(symbol, selected_period):
     # ax1.yaxis.set_major_formatter(ticker.FuncFormatter(price_formatter))
     ############################################################################################
     
-    if not highlight_high_values.empty:
-        for value in highlight_high_values:
-            ax1.axhline(y=value, color='#ff000f', linestyle='--', linewidth=1)	
+    if not highlight5_high_values.empty:
+        for value in highlight5_high_values:
+            ax1.axhline(y=value, color='#ff000f', linestyle='--', linewidth=0.8)	
     
-    if not highlight_low_values.empty:
-        for value in highlight_low_values:
-            ax1.axhline(y=value * 0.95, color='#0042a1', linestyle='--', linewidth=1)          ### working code
+    if not highlight5_low_values.empty:
+        for value in highlight5_low_values:
+            ax1.axhline(y=value * 0.95, color='#0042a1', linestyle='--', linewidth=0.8)          ### working code
     
+    if not highlight3_high_values.empty:
+        for value in highlight3_high_values:
+            ax1.axhline(y=value, color='#ff3b46', linestyle='--', linewidth=0.8)	
+    
+    if not highlight3_low_values.empty:
+        for value in highlight3_low_values:
+            ax1.axhline(y=value * 0.95, color='#004cbb', linestyle='--', linewidth=0.8)          ### working code
+    
+    if not highlight2_high_values.empty:
+        for value in highlight2_high_values:
+            ax1.axhline(y=value, color='#ff626b', linestyle='--', linewidth=0.8)	
+    
+    if not highlight2_low_values.empty:
+        for value in highlight2_low_values:
+            ax1.axhline(y=value * 0.95, color='#0061ee', linestyle='--', linewidth=0.8)          ### working code
+    
+    
+    
+    #### Plotting for TRaderule 8 
+    if not traderule8_high_values.empty:
+        for index, value in resampled_df['traderule8_high'].items():
+            if pd.notnull(value):
+                ax1.axhline(y=value, color='#0fffa1', linestyle='--', linewidth=0.8)
+    if not traderule8_low_values.empty:
+        for index, value in resampled_df['traderule8_low'].items():
+            if pd.notnull(value):
+                ax1.axhline(y=value, color='#0042a1', linestyle='--', linewidth=0.8)
+
+    #################################################################################################
     fig.suptitle(f'{symbol}', fontsize=14, y=0.95, color='#000ff0ff')  # Adjust the y position as needed
 
     # # Volume Chart
@@ -723,7 +1028,7 @@ def plot_daily_chart(symbol, selected_period):
     # Assuming you have a figure and two axes, ax1 and ax2, set up as part of your plotting code
     ################################################################################################
     # Calculate the interval for 5% of the price range
-    data_range = df['Close'].max() - df['Close'].min()
+    data_range = resampled_df['Close'].max() - resampled_df['Close'].min()
     # tick_interval = data_range * 0.05  # 5% of the data range
     tick_interval = data_range * 0.10  # 10% of the data range
 
@@ -739,6 +1044,9 @@ def plot_daily_chart(symbol, selected_period):
     # for RSI
     ax3.axhline(y=40, color='red', linestyle='--', linewidth=.4)
     ax3.axhline(y=60, color='green', linestyle='--', linewidth=.4)
+    # for CCI
+    ax4.axhline(y=-50, color='red', linestyle='--', linewidth=.4)
+    ax4.axhline(y=50, color='green', linestyle='--', linewidth=.4)
 ################################### crosshair ################################################    
 
     # Initialize the crosshair lines
@@ -803,8 +1111,12 @@ def plot_daily_chart(symbol, selected_period):
     fig.canvas.mpl_connect('motion_notify_event', update_crosshair)
 
     # Optionally, set the y-axis limits to match your data's range
-    ymin, ymax = df['Low'].min() * 0.98, df['High'].max() * 1.02 # Adjust for your DataFrame's columns
+    ymin, ymax = resampled_df['Low'].min() * 0.98, resampled_df['High'].max() * 1.02 # Adjust for your DataFrame's columns
     ax1.set_ylim([ymin, ymax])
+    
+    ### drawing a line in center of the chart.
+    chart_center = ( ymin + ymax ) / 2 
+    ax1.axhline(y=chart_center, color='orange', linestyle='--', linewidth=.4)
     
 		
 		
@@ -823,314 +1135,21 @@ def plot_daily_chart(symbol, selected_period):
 							]
     ax1.legend(custom_lines, ['ma189','mamix14', 'mamix42', 'vwma25', 'volsma5'], loc='upper left', fontsize=8, facecolor='#202020',labelcolor='dodgerblue')
     
-    
-    # Define a custom tooltip function
-    # def custom_tooltip(selection):
-    #     """Show a tooltip with OHLC data for the selected date."""
-    #     x = selection.target[0]
-    #     if isinstance(df.index, pd.DatetimeIndex):
-    #         date = df.index.get_loc(x, method='nearest')
-    #     else:
-    #         date = df.index[df.index.get_loc(x, method='nearest')]
-    #     candle_data = df.loc[date]
-    #     text = (
-    #         f"Date: {date}\n"
-    #         f"Open: {candle_data['open']:.2f}\n"
-    #         f"High: {candle_data['high']:.2f}\n"
-    #         f"Low: {candle_data['low']:.2f}\n"
-    #         f"Close: {candle_data['close']:.2f}")
-    #     selection.annotation.set_text(text)
-    # # Add cursor after plotting
-    # cursor = mplcursors.cursor(ax1, hover=True)
-    # cursor.connect("add", custom_tooltip)
-    #     # Add this line after plotting to enable mplcursors
-    # mplcursors.cursor(ax1, hover=True).connect("add", custom_tooltip)
-
     canvas.draw()
  
 
+    
+# Usage
 def plot_monthly_chart(symbol, selected_period):
-    
-    # Convert period to a format suitable for SQL query
-    period_map = {
-        '1mo': '1 month',
-        '3mo': '3 months',
-        '6mo': '6 months',
-        '1y': '1 year',
-        '2y': '2 years',
-        '3y': '3 years',
-        '4y': '4 years',
-        '5y': '5 years',
-        '6y': '6 years',
-        '7y': '7 years',
-        '8y': '8 years',
-        '9y': '9 years',
-        '10y': '10 years',
-        'max': '100 years'  # Assuming max means as much data as possible
-    }
-    sql_period = period_map.get(selected_period)
-    
-    cur.execute("SELECT date, open, high, low, close, volume FROM daily_prices WHERE symbol = %s AND date >= NOW() - INTERVAL %s ORDER BY date", (symbol, sql_period))
-    
-    rows = cur.fetchall()
-    
-    data = {
-        'Date': [row[0] for row in rows],
-        'Open': [round(row[1], 2) for row in rows],
-        'High': [round(row[2], 2) for row in rows],
-        'Low': [round(row[3], 2) for row in rows],
-        'Close': [round(row[4], 2) for row in rows],
-        'Volume': [row[5] for row in rows]
-        
-    }
-    
-    df = pd.DataFrame(data)
-    df.set_index('Date', inplace=True)
-    df.index = pd.to_datetime(df.index)  # Ensure the index is a DatetimeIndex
-    
-    # Resample to monthly data
-    monthly_df = df.resample('M').agg({
-        'Open': 'first',
-        'High': 'max',
-        'Low': 'min',
-        'Close': 'last',
-        'Volume': 'sum'
-    })
-
-    if not monthly_df.empty:
-            latest_data = monthly_df.iloc[-1]
-            prev_close = monthly_df.iloc[-2]['Close'] if len(monthly_df) > 1 else 0  # Handle the case where there's no previous data
-            percent_change = ((latest_data['Close'] - prev_close) / prev_close) * 100 if prev_close != 0 else 0  # Avoid division by zero
-            latest_info = (
-                f"Date: {latest_data.name.strftime('%b %d %Y')}, "
-                f"Open: {latest_data['Open']:.2f}, "
-                f"High: {latest_data['High']:.2f}, "
-                f"Low: {latest_data['Low']:.2f}, "
-                f"Close: {latest_data['Close']:.2f}, "
-                f"Chg: {percent_change:.2f}%"
-            )
-    else:
-            latest_info = "No data available"
-        
-
-    fig.clear()
-    
-    ax1 = fig.add_subplot(2, 1, 1)
-    ax2 = fig.add_subplot(2, 1, 2, sharex=ax1)
-    
-    # Add the highlight plot to the original plot
-    addplot = [
-        # mpf.make_addplot(df['ma7'], ax=ax1, color='red'),
-
-    ]
-    # # Create a figure and axis
-    # ax1 = fig.add_subplot(111)
-
- 
-
-    # Plot the candlestick chart
-    mpf.plot(monthly_df, type='candle', style=samie_style_obj, ax=ax1, volume=ax2, datetime_format='%Y-%m')
-    ax1.set_title(f' ({selected_period}) :  {latest_info}', loc='left',  fontsize=10, color='dodgerblue', y=1)
-    ax1.set_ylabel('Price')
-    ax1.grid(axis='both', which='both', linestyle='--', linewidth=0.5, color='#31363F')
-    data_range = monthly_df['Close'].max() - monthly_df['Close'].min()
-    # tick_interval = data_range * 0.05  # 5% of the data range
-    tick_interval = data_range * 0.10  # 10% of the data range
-    
-    # Set y-axis major ticks at every 5% of the data range
-    ax1.yaxis.set_major_locator(ticker.MultipleLocator(tick_interval))
-    # ax1.set_ylim([df['Low'].min(), df['High'].max()])  # working code.. sets you graph to max and min values
-    
-    # Set the title on the primary axes to include the symbol name
-    # ax1.set_title(f'{symbol} Stock Price ({selected_period})', loc='center', fontsize=16, fontweight='bold')
-    fig.suptitle(f'{symbol}', fontsize=14, y=0.95, color='#ff000f')  # Adjust the y position as needed
-    fig.text(0.99, 0.95, 'MashaAllah', fontsize=10, ha='right', color='green')
-    # Enhanced Gridlines for ax1 (Price Chart)
-    ax1.grid(True, which='both', linestyle='--', linewidth=0.5, color='gray')  # Major and minor grids for ax1
-    
-    ax1.set_xlabel('Date')
-    ax1.set_ylabel('Price')
-# # Plot the volume chart on ax2
-    ax2.set_title('  Volume', loc='left',  fontsize=10, pad=5)
-    ax2.set_ylabel('Volume')
-    ax2.yaxis.set_label_position('right')
-    ax2.yaxis.tick_right()
-    ax2.yaxis.set_major_formatter(ticker.FuncFormatter(volume_formatter))
-        
-    # Enhanced Gridlines for ax2 (Volume Chart)
-    ax2.grid(True, which='both', linestyle='--', linewidth=0.5, color='#31363F')  # Major and minor grids for ax2
-
-    ax1.set_position([0.1, 0.3, 0.8, 0.6])  # Adjust position to make main chart larger
-    ax2.set_position([0.1, 0.1, 0.8, 0.2])  # Adjust position to make volume chart smaller
-
-    
-    # Initialize the crosshair lines
-    crosshair_v = ax1.axvline(x=0, color='#074173', linestyle='--')
-    crosshair_h = ax1.axhline(y=0, color='#074173', linestyle='--')
-
-    # Function to update the crosshair position
-    def update_crosshair(event):
-        if event.inaxes == ax1:
-            crosshair_v.set_xdata([event.xdata, event.xdata])
-            ymin, ymax = ax1.get_ylim()
-            if ymin <= event.ydata <= ymax:
-                crosshair_h.set_ydata([event.ydata, event.ydata])
-            else:
-                crosshair_h.set_ydata([ymin, ymin])
-            fig.canvas.draw_idle()
-
-    # Connect the function to the figure's motion_notify_event
-    fig.canvas.mpl_connect('motion_notify_event', update_crosshair)
-
-    # Optionally, set the y-axis limits to match your data's range
-    ymin, ymax = monthly_df['Low'].min(), monthly_df['High'].max()  # Adjust for your DataFrame's columns
-    ax1.set_ylim([ymin, ymax])
-    
-    # Show the plot
-    canvas.draw()
-
-    # Assuming you want to draw the plot on a canvas in a Tkinter GUI, you should replace plt.show() with canvas.draw() if you're integrating this into a Tkinter application
-    # canvas.draw()
+    plot_resampled_chart(symbol, selected_period, resample_freq='ME')
 
 def plot_weekly_chart(symbol, selected_period):
-    
-    # Convert period to a format suitable for SQL query
-    period_map = {
-        '1mo': '1 month',
-        '3mo': '3 months',
-        '6mo': '6 months',
-        '1y': '1 year',
-        '2y': '2 years',
-        '3y': '3 years',
-        '4y': '4 years',
-        '5y': '5 years',
-        '6y': '6 years',
-        '7y': '7 years',
-        '8y': '8 years',
-        '9y': '9 years',
-        '10y': '10 years',
-        'max': '100 years'  # Assuming max means as much data as possible
-    }
-    sql_period = period_map.get(selected_period)
-    
-    cur.execute("SELECT date, open, high, low, close, volume FROM daily_prices WHERE symbol = %s AND date >= NOW() - INTERVAL %s ORDER BY date", (symbol, sql_period))
-    
-    rows = cur.fetchall()
-    
-    data = {
-        'Date': [row[0] for row in rows],
-        'Open': [round(row[1], 2) for row in rows],
-        'High': [round(row[2], 2) for row in rows],
-        'Low': [round(row[3], 2) for row in rows],
-        'Close': [round(row[4], 2) for row in rows],
-        'Volume': [row[5] for row in rows]
-        
-    }
-    
-    df = pd.DataFrame(data)
-    df.set_index('Date', inplace=True)
-    df.index = pd.to_datetime(df.index)  # Ensure the index is a DatetimeIndex
-    
-    # Resample to monthly data
-    # Resample to weekly data
-    weekly_df = df.resample('W').agg({
-        'Open': 'first',
-        'High': 'max',
-        'Low': 'min',
-        'Close': 'last',
-        'Volume': 'sum'
-    })
+    plot_resampled_chart(symbol, selected_period, resample_freq='W')
 
-    if not weekly_df.empty:
-            latest_data = weekly_df.iloc[-1]
-            prev_close = weekly_df.iloc[-2]['Close'] if len(weekly_df) > 1 else 0  # Handle the case where there's no previous data
-            percent_change = ((latest_data['Close'] - prev_close) / prev_close) * 100 if prev_close != 0 else 0  # Avoid division by zero
-            latest_info = (
-                f"Date: {latest_data.name.strftime('%b %d %Y')}, "
-                f"Open: {latest_data['Open']:.2f}, "
-                f"High: {latest_data['High']:.2f}, "
-                f"Low: {latest_data['Low']:.2f}, "
-                f"Close: {latest_data['Close']:.2f}, "
-                f"Chg: {percent_change:.2f}%"
-            )
-    else:
-            latest_info = "No data available"
-        
+def plot_daily_chart(symbol, selected_period):
+    plot_resampled_chart(symbol, selected_period, resample_freq='D')
 
-    fig.clear()
-    
-    ax1 = fig.add_subplot(2, 1, 1)
-    ax2 = fig.add_subplot(2, 1, 2, sharex=ax1)
-    
-    # Add the highlight plot to the original plot
-    addplot = [
-        # mpf.make_addplot(df['ma7'], ax=ax1, color='red'),
-
-    ]
-    # # Create a figure and axis
-    # ax1 = fig.add_subplot(111)
-
-    # Plot the candlestick chart
-    mpf.plot(weekly_df, type='candle', style=samie_style_obj, ax=ax1, volume=ax2, datetime_format='%Y-%m')
-
-    ax1.set_title(f' ({selected_period}) :  {latest_info}', loc='left',  fontsize=10, color='dodgerblue')
-    ax1.set_ylabel('Price')
-    ax1.grid(axis='both', which='both', linestyle='--', linewidth=0.5, color='#31363F')
-    data_range = weekly_df['Close'].max() - weekly_df['Close'].min()
-    # tick_interval = data_range * 0.05  # 5% of the data range
-    tick_interval = data_range * 0.10  # 10% of the data range
-    
-    # Set y-axis major ticks at every 5% of the data range
-    ax1.yaxis.set_major_locator(ticker.MultipleLocator(tick_interval))
-    # ax1.set_ylim([df['Low'].min(), df['High'].max()])  # working code.. sets you graph to max and min values
-    
-    # Set the title on the primary axes to include the symbol name
-    # ax1.set_title(f'{symbol} Stock Price ({selected_period})', loc='center', fontsize=16, fontweight='bold')
-    fig.suptitle(f'{symbol}', fontsize=14, y=0.98, color='#ff000f')  # Adjust the y position as needed
-    fig.text(0.99, 0.95, 'MashaAllah', fontsize=10, ha='right', color='green')
-    # Enhanced Gridlines for ax1 (Price Chart)
-    # ax1.grid(True, which='both', linestyle='--', linewidth=0.5, color='#31363F')  # Major and minor grids for ax1
-    
-    ax1.set_xlabel('Date')
-    ax1.set_ylabel('Price')
-# # Plot the volume chart on ax2
-    ax2.set_title('  Volume', loc='left',  fontsize=10, pad=5)
-    ax2.set_ylabel('Volume')
-    ax2.yaxis.set_label_position('right')
-    ax2.yaxis.tick_right()
-    ax2.yaxis.set_major_formatter(ticker.FuncFormatter(volume_formatter))
-        
-    # Enhanced Gridlines for ax2 (Volume Chart)
-    ax2.grid(True, which='both', linestyle='--', linewidth=0.5, color='#31363F')  # Major and minor grids for ax2
-
-    ax1.set_position([0.1, 0.3, 0.8, 0.6])  # Adjust position to make main chart larger
-    ax2.set_position([0.1, 0.1, 0.8, 0.2])  # Adjust position to make volume chart smaller
-
-    
-    # Initialize the crosshair lines
-    crosshair_v = ax1.axvline(x=0, color='#074173', linestyle='--')
-    crosshair_h = ax1.axhline(y=0, color='#074173', linestyle='--')
-
-    # Function to update the crosshair position
-    def update_crosshair(event):
-        if event.inaxes == ax1:
-            crosshair_v.set_xdata([event.xdata, event.xdata])
-            ymin, ymax = ax1.get_ylim()
-            if ymin <= event.ydata <= ymax:
-                crosshair_h.set_ydata([event.ydata, event.ydata])
-            else:
-                crosshair_h.set_ydata([ymin, ymin])
-            fig.canvas.draw_idle()
-
-    # Connect the function to the figure's motion_notify_event
-    fig.canvas.mpl_connect('motion_notify_event', update_crosshair)
-
-    # Optionally, set the y-axis limits to match your data's range
-    ymin, ymax = weekly_df['Low'].min(), weekly_df['High'].max()  # Adjust for your DataFrame's columns
-    ax1.set_ylim([ymin, ymax])
-    
-    # Show the plot
-    canvas.draw()
+##############################################????????????????????????????????#############################
 
 
 def add_stock():
@@ -1141,7 +1160,7 @@ def add_stock():
             # watchlist.set_values(sorted(watchlist))
             cur.execute("INSERT INTO tickers (symbol) VALUES (%s) ON CONFLICT (symbol) DO NOTHING", (symbol,))
             conn.commit()
-            asyncio.run(calculate_and_store_rsi(symbol))
+            asyncio.run(calculate_and_store_rsi_cci(symbol))
             asyncio.run(calculate_and_store_ma(symbol))
             asyncio.run(update_traderules(symbol))
             
@@ -1202,24 +1221,28 @@ def on_select(event):
 
 async def update_traderules(symbol):
     cur.execute("""
-        SELECT date, open, high, low, close, rsi3, mamix14, mamix42, vwma25, volsma5,
-               traderule1, traderule2, traderule3, traderule4, traderule5, traderule6 
+        SELECT date, open, high, low, close, rsi3, rsi14, mamix14, mamix42, vwma25, volsma5, ma10, ma21, ma32, ma43, ma54, stochrsi14, volume, bb_percent_b,
+               traderule1, traderule2, traderule3, traderule4, traderule5, traderule6, traderule7, traderule8, traderule9, traderule10 
         FROM daily_prices 
         WHERE symbol = %s 
         ORDER BY date
     """, (symbol,))
     rows = cur.fetchall()
     
-    df = pd.DataFrame(rows, columns=['date', 'open', 'high', 'low', 'close', 'rsi3', 'mamix14', 'mamix42', 'vwma25', 'volsma5',
-                                     'traderule1', 'traderule2', 'traderule3', 'traderule4', 'traderule5', 'traderule6'])
+    df = pd.DataFrame(rows, columns=['date', 'open', 'high', 'low', 'close', 'rsi3', 'rsi14', 'mamix14', 'mamix42', 'vwma25', 'volsma5', 'ma10','ma21', 'ma32', 'ma43', 'ma54', 'stochrsi14', 'volume', 'bb_percent_b', 
+                                     'traderule1', 'traderule2', 'traderule3', 'traderule4', 'traderule5', 'traderule6', 'traderule7', 'traderule8', 'traderule9', 'traderule10'])
     df.set_index('date', inplace=True)
     df = df.fillna(value=np.nan)
 
+
+    # Calclulate slope of mamix 14 for entries
+    mamix14slope = df['mamix14'].shift(8) / df['mamix14']
     # Calculate traderule1
     df['new_traderule1'] = (df['close'].shift(3) < df['open'].shift(3)) & \
                            (df['close'].shift(2) < df['open'].shift(2)) & \
                            (df['close'].shift(1) < df['open'].shift(1)) & \
-                           (df['close'] > df['open'])
+                           (df['close'] > df['open']) & \
+                           (mamix14slope < 1.01)
 
     # Calculate traderule2
     df['new_traderule2'] = (df['close'].shift(2) < df['open'].shift(2)) & \
@@ -1228,7 +1251,7 @@ async def update_traderules(symbol):
                            (df['open'].shift(1) > df['close'].shift(2)) & \
                            (df['open'] < df['open'].shift(1)) & \
                            (df['close'] > df['close'].shift(1)) & \
-                           (df['close'] > df['open'].shift(2))
+                           (df['close'] > df['open'].shift(2)) 
 
     # Calculate traderule3
     df['new_traderule3'] = (df['high'] > df['high'].shift(2)) & \
@@ -1258,14 +1281,46 @@ async def update_traderules(symbol):
                         (df['close'] < df['open'].shift(1)) & \
                         (df['close'] / df['open'] < 1.002) & \
                         (df['close'] < df['vwma25'] * 1.01)
-                       
+    # Calculate traderule7
+    df['samies_morningstar'] = (df['close'].shift(2) < df['open'].shift(2)) & \
+                        (df['close'].shift(1) > df['low'].shift(2)) & \
+                        (df['close'].shift(1) > ((df['high'].shift(1) + df['low'].shift(1)) / 2)) & \
+                        (df['close'].shift(1) < df['high'].shift(2)) & \
+                        (df['close'] > df['high'].shift(1)) & \
+                        (df['close'] > ((df['high'] + df['low']) / 2)) & \
+                        (mamix14slope < 1.01)
+    # Calculate traderule8
+    df['new_traderule8'] = (df['close'] > df['ma10']) & \
+                        (df['close'] > df['ma21']) & \
+                        (df['close'] > df['ma32']) & \
+                        (df['close'] > df['ma43']) & \
+                        (df['close'] > df['ma54']) & \
+                        (df['volume'] > df['volsma5']) & \
+                        (df['close'] > df['high'].shift(1)) & \
+                        (df['close'].shift(1) <= df['ma54'].shift(1)) & \
+                        (df['close'] > ((df['high'] + df['low']) / 2)) & \
+                        (mamix14slope < 1.01)
+    # Bollinger band percent b breakout                        
+    df['bbpct_b'] = (df['bb_percent_b'] > 0.5) & (df['bb_percent_b'].shift(1) < 0.5) & (mamix14slope < 1.01)
+    
+    ## bbpct_b and rsi14 oversold reversal candle.
+    df['perfect_bottom'] =  (df['bb_percent_b'].shift(1) < 0.4) & \
+                            (df['rsi3'].shift(1) < 20) & \
+                            (df['rsi14'].shift(1) < 40) & \
+                            (df['close'] > ((df['high'] + df['low']) / 2)) & \
+                            (mamix14slope < 1.01)
+                                
     # Find rows where traderules have changed
     changed_rows = df[(df['traderule1'] != df['new_traderule1']) | 
                       (df['traderule2'] != df['new_traderule2']) |
                       (df['traderule3'] != df['new_traderule3']) |
                       (df['traderule4'] != df['new_traderule4']) |
                       (df['traderule5'] != df['new_traderule5']) |
-                      (df['traderule6'] != df['new_traderule6'])]
+                      (df['traderule6'] != df['new_traderule6']) |
+                      (df['traderule7'] != df['samies_morningstar']) | 
+                      (df['traderule8'] != df['new_traderule8']) |
+                      (df['traderule9'] != df['bbpct_b'])  |
+                      (df['traderule10'] != df['perfect_bottom']) ]
 
     # Prepare batch updates
     updates = [(bool(row['new_traderule1']), 
@@ -1274,17 +1329,22 @@ async def update_traderules(symbol):
                 bool(row['new_traderule4']),
                 bool(row['new_traderule5']),
                 bool(row['new_traderule6']),
+                bool(row['samies_morningstar']),
+                bool(row['new_traderule8']),
+                bool(row['bbpct_b']),
+                bool(row['perfect_bottom']),
+                
                 symbol, row.name) for _, row in changed_rows.iterrows()]
 
     # Perform bulk update
     cur.executemany("""
         UPDATE daily_prices 
-        SET traderule1 = %s, traderule2 = %s, traderule3 = %s, traderule4 = %s, traderule5 = %s, traderule6 = %s
+        SET traderule1 = %s, traderule2 = %s, traderule3 = %s, traderule4 = %s, traderule5 = %s, traderule6 = %s, traderule7 = %s, traderule8 = %s, traderule9 = %s, traderule10 = %s
         WHERE symbol = %s AND date = %s
     """, updates)
     
     conn.commit()
-    print(f"Updated traderule columns in the database for symbol {symbol}")
+    print(f"Updated traderules columns in the database for symbol {symbol}")
 
 # Call the function
 # update_traderules(symbol)
@@ -1398,6 +1458,10 @@ def download_last_3_days_histdata():
 #################################### All Rules update section ####################################                
 def update_Screensers_thread():
     threading.Thread(target=update_Screeners, daemon=True).start()
+        
+    root.after(0, lambda: messagebox.showinfo("Success", "All traderules updated for all symbols!"))
+    root.after(0, lambda: progress_bar.pack_forget())  # Hide the progress bar when done
+
 
 def update_Screeners(): # updates every symbol
     cur.execute("SELECT symbol FROM tickers")
@@ -1411,47 +1475,47 @@ def update_Screeners(): # updates every symbol
         progress = (index / total_symbols) * 100
         root.after(0, lambda p=progress: update_progress(p))
     
-    root.after(0, lambda: messagebox.showinfo("Success", "All traderules updated for all symbols!"))
-    root.after(0, lambda: progress_bar.pack_forget())  # Hide the progress bar when done
+    # root.after(0, lambda: messagebox.showinfo("Success", "All traderules updated for all symbols!"))
+    # root.after(0, lambda: progress_bar.pack_forget())  # Hide the progress bar when done
 def update_progress(progress):
     # Update a progress bar or label in your UI
     # For example, if you have a progress bar widget named progress_bar:
     progress_bar['value'] = progress
     root.update_idletasks()
 ##################################################################
-def detect_cspatterns():
-    try:
-        filtered_patterns = get_filtered_patterns()
-        filtered_patterns = filtered_patterns.sort_values(by='Date', ascending=False)
+# def detect_cspatterns():
+#     try:
+#         filtered_patterns = get_filtered_patterns()
+#         filtered_patterns = filtered_patterns.sort_values(by='Date', ascending=False)
 
 
-        # Create a popup window with a table to display the results
-        popup =  tk.Toplevel()
-        popup.title("CSpatterns Detection Results")
+#         # Create a popup window with a table to display the results
+#         popup =  tk.Toplevel()
+#         popup.title("CSpatterns Detection Results")
 
-        # Create a table to display the results
-        table = ttk.Treeview(popup)
-        table['columns'] = tuple(filtered_patterns.columns)
+#         # Create a table to display the results
+#         table = ttk.Treeview(popup)
+#         table['columns'] = tuple(filtered_patterns.columns)
 
-        # Format the table columns
-        table.column("#0", width=0, stretch=tk.NO)
-        for col in filtered_patterns.columns:
-            table.column(col, anchor=tk.W, width=100)
-            table.heading(col, text=col, anchor=tk.W)
+#         # Format the table columns
+#         table.column("#0", width=0, stretch=tk.NO)
+#         for col in filtered_patterns.columns:
+#             table.column(col, anchor=tk.W, width=100)
+#             table.heading(col, text=col, anchor=tk.W)
 
-        # Insert data into the table
-        for index, row in filtered_patterns.iterrows():
-            values = [('✅' if v == True else ' ' if v == False else v) for v in row]
-            table.insert('', 'end', values=values)
+#         # Insert data into the table
+#         for index, row in filtered_patterns.iterrows():
+#             values = [('✅' if v == True else ' ' if v == False else v) for v in row]
+#             table.insert('', 'end', values=values)
 
-        # Pack the table
-        table.pack(fill=tk.BOTH, expand=True)
+#         # Pack the table
+#         table.pack(fill=tk.BOTH, expand=True)
 
-        # Make the popup window visible
-        popup.mainloop()
+#         # Make the popup window visible
+#         popup.mainloop()
 
-    except Exception as e:
-        print(f"An error occurred: {e}")
+#     except Exception as e:
+#         print(f"An error occurred: {e}")
 
 
 
@@ -1465,11 +1529,10 @@ def up2date_chart():
 
     async def update_tasks(symbol):
         await asyncio.gather(
-            calculate_and_store_rsi(symbol),
-            calculate_and_store_ma(symbol),
-            update_traderules(symbol)
+            calculate_and_store_rsi_cci(symbol),
+            calculate_and_store_ma(symbol)
         )
-
+        await update_traderules(symbol)
     def run_async_tasks():
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -1480,13 +1543,23 @@ def up2date_chart():
 
 async def update_everything():
     cur.execute("SELECT symbol FROM tickers")
-    symbols = cur.fetchall()
+    symbols = [symbol[0] for symbol in cur.fetchall()]
     # Sort the symbols in ascending order
     symbols.sort()
-    for symbol in symbols:
-            await calculate_and_store_rsi(symbol),
+    
+    total_symbols = len(symbols)
+    for index, symbol in enumerate(symbols):
+            await calculate_and_store_rsi_cci(symbol),
             await calculate_and_store_ma(symbol),
-            await update_traderules(symbol)
+            await update_traderules(symbol)   ### enable later.. 
+            
+            # Update progress
+            progress = (index + 1 / total_symbols) * 100
+            root.after(0, lambda p=progress: update_progress(p))
+    
+    root.after(0, lambda: messagebox.showinfo("Success", "All traderules updated for all symbols!"))
+    root.after(0, lambda: progress_bar.pack_forget())  # Hide the progress bar when done
+
         
         
 def show_recent_signals():
@@ -1495,15 +1568,15 @@ def show_recent_signals():
     
     # Create a style
     style = ttk.Style()
-    style.configure("Treeview", font=('Arial', 10), foreground="black", rowheight=20)
-    style.configure("BoldText", font=('Arial', 10, 'bold'), foreground="black")
+    style.configure("Treeview", font=('Nirmala UI', 10), foreground="black", rowheight=20)
+    style.configure("BoldText", font=('Nirmala UI', 10, 'bold'), foreground="black")
 
     style.configure(
         "Treeview",
         background="#D3DEDC",
         fieldbackground="#aeae",
         foreground="#272727",
-        font=('Arial', 10, "bold"),
+        font=('Nirmala UI', 10, "bold"),
         rowheight=20,
         height=1,
         borderwidth=0,
@@ -1524,7 +1597,7 @@ def show_recent_signals():
     )
 
     # Create a treeview to display the data
-    tree = ttk.Treeview(popup, columns=("Date", "Symbol", "Rule2", "Rule3", "Rule4", "Rule5", "Rule6"), show="headings", height=10)
+    tree = ttk.Treeview(popup, columns=("Date", "Symbol", "Rule2", "Rule3", "Rule4", "Rule5", "Rule6", "Rule7", "Rule8", "Rule9", "Rule10"), show="headings", height=10)
     
     # Set column widths and alignment
     tree.column("Date", width=100, anchor='center')
@@ -1534,6 +1607,10 @@ def show_recent_signals():
     tree.column("Rule4", width=100, anchor='center')
     tree.column("Rule5", width=100, anchor='center')
     tree.column("Rule6", width=100, anchor='center')
+    tree.column("Rule7", width=100, anchor='center')
+    tree.column("Rule8", width=100, anchor='center')
+    tree.column("Rule9", width=100, anchor='center')
+    tree.column("Rule10", width=100, anchor='center')
 
     tree.heading("Date", text="Date")
     tree.heading("Symbol", text="Symbol")
@@ -1542,6 +1619,10 @@ def show_recent_signals():
     tree.heading("Rule4", text="Rule 4")
     tree.heading("Rule5", text="Rule 5")
     tree.heading("Rule6", text="Rule 6")
+    tree.heading("Rule7", text="SaMornStar")
+    tree.heading("Rule8", text="Ma54xOver")
+    tree.heading("Rule9", text="BBpctBxOver")
+    tree.heading("Rule10", text="PerfectBottom")
     
     # Fetch data from the database
     days_ago = (datetime.now() - timedelta(days=5)).strftime('%Y-%m-%d')
@@ -1552,10 +1633,14 @@ def show_recent_signals():
             BOOL_OR(traderule3) AS traderule3, 
             BOOL_OR(traderule4) AS traderule4,
             BOOL_OR(traderule5) AS traderule5,
-            BOOL_OR(traderule6) AS traderule6
+            BOOL_OR(traderule6) AS traderule6,
+            BOOL_OR(traderule7) AS traderule7,
+            BOOL_OR(traderule8) AS traderule8,
+            BOOL_OR(traderule9) AS traderule9,
+            BOOL_OR(traderule10) AS traderule10
 
     FROM daily_prices
-    WHERE date >= %s AND (traderule2 OR traderule3 OR traderule4 OR traderule5 OR traderule6)
+    WHERE date >= %s AND (traderule2 OR traderule3 OR traderule4 OR traderule5 OR traderule6 OR traderule7 OR traderule8 OR traderule9 OR traderule10)
     GROUP BY date, symbol
     """
     cur.execute(query, (days_ago,))
@@ -1567,10 +1652,10 @@ def show_recent_signals():
 
     # Populate the treeview
     for row in results:
-        date, symbol, rule2, rule3, rule4, rule5, rule6 = row
+        date, symbol, rule2, rule3, rule4, rule5, rule6, rule7, rule8, rule9, rule10 = row
             # Convert symbol to sentence case
         # symbol_sentence_case = symbol.capitalize() #works
-        values = (date, symbol, "✅" if rule2 else " ", "✅" if rule3 else " ", "✅" if rule4 else " ", "✅" if rule5 else " ", "✅" if rule6 else " ")
+        values = (date, symbol, "✅" if rule2 else " ", "✅" if rule3 else " ", "✅" if rule4 else " ", "✅" if rule5 else " ", "✅" if rule6 else " ", "✅" if rule7 else " ", "✅" if rule8 else " ", "✅" if rule9 else " ", "✅" if rule10 else " ")
         item = tree.insert("", "end", values=values)
         # # Check if any rule is True and apply the highlight tag to the entire row if so
         if any(values[2:]):  # Assuming the first two columns are date and symbol, and the rest are boolean rules
@@ -1587,6 +1672,14 @@ def show_recent_signals():
             tree.item(item, tags=('BoldText', item))  # Apply to the sixth column (Rule5)
         if rule6:
             tree.item(item, tags=('BoldText', item))  # Apply to the sixth column (Rule6)
+        if rule7:
+            tree.item(item, tags=('BoldText', item))  # Apply to the sixth column (Rule7)
+        if rule8:
+            tree.item(item, tags=('BoldText', item))  # Apply to the sixth column (Rule8)
+        if rule9:
+            tree.item(item, tags=('BoldText', item))  # Apply to the sixth column (Rule8)
+        if rule10:
+            tree.item(item, tags=('BoldText', item))  # Apply to the sixth column (Rule8)
 
         tree.pack(expand=True, fill="both", padx=10, pady=10)
         # Bind double-click event
@@ -1600,6 +1693,19 @@ def on_tree_double_click(tree):
             symbol = item_values[1]  # Get the symbol from the second column
             selected_period = period_var.get()  # Assuming you have a period_var
             selected_timeframe = timeframe_var.get()  # Assuming you have a timeframe_var
+            
+            # Clear the current selection in the watchlist
+            watchlist.selection_clear(0, tk.END)
+
+            # Find the index of the symbol in the watchlist
+            index = 0
+            while index < watchlist.size():
+                if watchlist.get(index) == symbol:
+                    # Select the symbol in the watchlist
+                    watchlist.selection_set(index)
+                    break
+                index += 1
+            
 
             if selected_timeframe == "Daily":
                 plot_daily_chart(symbol, selected_period)
@@ -1629,8 +1735,9 @@ def create_traders_diary_notes_popup():
     notes_data = cur.fetchall()
     
     # Create the popup window
-    traders_diary_notes_create_popup =  tk.Toplevel(root, position="right")
+    traders_diary_notes_create_popup = tk.Toplevel(root)
     traders_diary_notes_create_popup.title("Traders Diary")
+    traders_diary_notes_create_popup.geometry("+%d+%d" % (root.winfo_screenwidth() - 400, 0))
 
     # Symbol Display
     selected_symbol = watchlist.get(watchlist.curselection())
@@ -1682,6 +1789,7 @@ def create_traders_diary_notes_popup():
     save_button.pack()
     traders_diary_notes_create_popup.mainloop()
 
+    
 def view_traders_diary_notes_popup():
         # Fetch existing notes for selected symbol from the database
         cur.execute("SELECT date, symbol, notes  FROM daily_prices WHERE notes IS NOT NULL ORDER BY date DESC")
@@ -1691,6 +1799,8 @@ def view_traders_diary_notes_popup():
         """Opens a new window to display all previous notes."""
         view_notes =  tk.Toplevel(root)
         view_notes.title("All Previous Notes for all Symbols")
+        view_notes.geometry("+%d+%d" % (root.winfo_screenwidth() - 800, 0))
+
 
         # Create a Treeview to display the notes
         tree = ttk.Treeview(view_notes, columns=("Date", "Symbol", "Notes"), 
@@ -1760,16 +1870,17 @@ def resize_figure(event):
 BG_COLOR = '#162636'
 # Create the main window
 root = tk.Tk()
+root.option_add("*Font", "Ebrima 8")
+root.wm_state('zoomed')
+
+style = ttk.Style()
+style.theme_use('clam')
 
 # root =  tk.Window(themename="darkly")
 root.title("Subhantech Stock Watchlist")
 root.configure(background=BG_COLOR)
-# style.configure("TFrame", background="#162636")
-# style.theme_use("darkly")
-# style.configure("darkly", background="#162636")
 root.geometry("1900x1000")
 
-import ctypes
 
 def set_title_bar_color(root):
     root.update()
@@ -1799,10 +1910,10 @@ def update_quote():
     quotes = load_quotes()
     random_quote = random.choice(quotes)
     text_label.config(text=random_quote)
-    threading.Timer(120, update_quote).start()  # 300 seconds = 5 minutes
+    root.after(30000, update_quote)  # 30000 milliseconds = 30 seconds
 
 # Create the Label
-text_label = Label(root, text="", font=("Arial", 10), wraplength=1000)
+text_label = Label(root, text="", font=("Nirmala UI", 10), wraplength=1000)
 text_label.pack()
 
 # Start updating quotes
@@ -1821,12 +1932,13 @@ sidebar.pack_propagate(False)
 
 # Create the watchlist frame with a fixed height
 watchlist_frame = tk.Frame(sidebar, width=180, height=400, background=BG_COLOR)  # Adjust height as needed
-watchlist_frame.pack(side='top', fill='y', expand=False)
+watchlist_frame.pack(side='top', fill='y', anchor='nw',expand=False)
 watchlist_frame.pack_propagate(False)
 
 # Create a listbox for the watchlist
-watchlist = tk.Listbox(watchlist_frame, fg="black", font=("Arial", 10), bd=0, borderwidth=0, relief=tk.FLAT)
-watchlist.pack(side='left', expand=True, fill='y', padx=5, pady=5)
+watchlist = tk.Listbox(watchlist_frame, fg="black", font=("Nirmala UI", 10), bd=0, borderwidth=0, relief=tk.FLAT, selectborderwidth=2, selectforeground="white", selectbackground=BG_COLOR)
+watchlist.pack(side='left', expand=True, fill='y', anchor='nw', padx=5, pady=1)
+
 
 # Add a scrollbar to the watchlist frame
 scrollbar = tk.Scrollbar(watchlist_frame, command=watchlist.yview)
@@ -1931,7 +2043,7 @@ stock_other_section =  tk.Frame(sidebar_bottom_frame, background=BG_COLOR)
 stock_other_section.pack(fill=tk.Y, side=tk.TOP)
 
 update_all_rules_button =  tk.Button(stock_other_section, text="Update Screeners", command=update_Screeners)
-update_all_rules_button.pack(side=tk.RIGHT, padx=10, pady=5)
+update_all_rules_button.pack(side=tk.RIGHT, padx=10, pady=5, anchor='nw')
 
 add_fromfile_button =  tk.Button(stock_other_section, text="Add Chartink Stocks", command=add_chartink_stock)
 add_fromfile_button.pack(padx=10,pady=5, side=tk.LEFT)
@@ -1998,10 +2110,10 @@ period_var =  tk.StringVar(value='1y')
 period_label =  tk.Label(timeframe_section, text="Select Period:")
 period_label.pack(side=tk.LEFT, padx=5)
 
-period_options = ['6mo', '1d', '5d', '1mo', '3mo', '6mo', '1y', '2y', '3y', '4y', '5y', '6y','7y', '8y', '9y', '10y', 'max']
+period_options = ['6mo', '1d', '5d', '1mo', '3mo', '6mo', '9mo', '1y', '2y', '3y', '4y', '5y', '6y','7y', '8y', '9y', '10y', 'max']
 period_menu = ttk.OptionMenu(timeframe_section, period_var, *period_options)
-period_menu.pack(side=tk.LEFT, padx=5)
-
+period_menu.pack(side=tk.LEFT, padx=1)
+period_menu.config(width=5)
 # Bind to period_var changes
 # With this:
 period_var.trace_add("write", lambda *args: on_select(None))
@@ -2022,6 +2134,25 @@ for option, value in timeframe_options.items():
     button =  tk.Button(timeframe_section, text=option, command=lambda value=value: [timeframe_var.set(value), on_select(None)])
     button.pack(side=tk.LEFT, padx=5)
     
+##################################################################################
+# Create an IntVar to hold the value
+triangle_length_var = tk.IntVar(value=12)
+
+# Create the Entry widget and link it to the IntVar
+triangle_length = tk.Entry(timeframe_section, width=3, textvariable=triangle_length_var)
+triangle_length.pack(side=tk.LEFT, padx=5, pady=5)
+
+# Function to retrieve and use the value
+def use_triangle_length():
+    value = triangle_length_var.get()
+    # print(f"Triangle Length: {value}")
+    # Use the value in another place
+    # For example, you can pass it to another function or use it in calculations
+
+# Button to trigger the function
+use_button = tk.Button(timeframe_section, text="Triangle Size", command=use_triangle_length)
+use_button.pack(side=tk.LEFT)
+
   
 update_3days_data_button =  tk.Button(timeframe_section, text="Price Up2date", command=lambda: download_last_3_days_histdata())
 update_3days_data_button.pack(side=tk.RIGHT, padx=10, pady=5)

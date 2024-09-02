@@ -1,0 +1,9 @@
+Don't Trade in the First hour of trading.
+Don't Trade with out plan of Target and Stoploss
+Does the Close break out of Previous high volume candle Trendline.
+Is the Close greater than the Previous high volume candle Trendline.
+Is the Close greater than middle line (To know strength  in one direction)
+Is the Breakout happened on RSI3 of previous high
+What is Volume Profile Saying about this chart.
+Don't Average the loser.. you can average only once if the price down 50 % of option. (If you think it will grow)
+
