@@ -61,6 +61,7 @@ import pygame
 import random
 import html
 import ctypes
+from numba import njit
 
 import subprocess
 import os
@@ -71,7 +72,7 @@ import sam_functions
 
 #################################################################
 
-
+double_click_update = False
 ###################### py game audio player ############################################
 # Initialize the mixer pygame mixer to play audio on my site.
 pygame.mixer.init()
@@ -250,7 +251,7 @@ def fetch_data_from_db(symbol, selected_period):
             print(f"An error occured: {e}")
             conn.rollback()
     # Fetch the data from the database
-
+@njit
 def convert_period_to_days(selected_period):
     if selected_period == '5d':
         return 5
@@ -284,7 +285,7 @@ def convert_period_to_days(selected_period):
         return 3650
     else:
         raise ValueError("Invalid period format")
-    
+   
 def volume_formatter(x, pos):
     return f'{x:,.0f}'
 
@@ -293,7 +294,7 @@ def price_formatter(x, pos):
     return f'{x:,.2f}'
 
 data_needed_days = 1460
-
+# @njit
 async def calculate_and_store_rsi_cci(symbol):
     """Calculates RSI3 & RSI14 for the given symbol and stores it in the database."""
 
@@ -356,7 +357,7 @@ async def calculate_and_store_rsi_cci(symbol):
 
     print(f"RSI3,rsi14, CCI3 & 12, StochRSI14, BBpB calculated and stored for {symbol}")
     
-
+# @njit
 async def calculate_and_store_ma(symbol):
     # Initialize Redis connection
     redis_client =  redis.Redis(host='localhost', port=6379, db=0)
@@ -684,7 +685,7 @@ def plot_resampled_chart(symbol, selected_period, resample_freq='ME'):
         mpf.make_addplot(resampled_df['traderule2_highlight'], ax=ax1,  type='scatter', markersize=100, marker='^', color='#1e90ff'), # working code
         mpf.make_addplot(resampled_df['traderule3_highlight'], ax=ax1,  type='scatter', markersize=100, marker='s', color='#7572f1'), # working code
         mpf.make_addplot(resampled_df['traderule4_highlight'], ax=ax1, type='scatter', markersize=100, marker='d', color='#ff00ff'),  # New color for traderule4
-        mpf.make_addplot(resampled_df['traderule5_highlight'], ax=ax1, type='scatter', markersize=100, marker='^', color='#067887'),  # New color for traderule5
+        mpf.make_addplot(resampled_df['traderule5_highlight'], ax=ax1, type='scatter', markersize=100, marker='^', color='#0fff00'),  # New color for traderule5
         mpf.make_addplot(resampled_df['traderule6_highlight'], ax=ax1, type='scatter', markersize=100, marker='^', color='#007117'),  # New color for traderule6
         mpf.make_addplot(resampled_df['traderule7_highlight'], ax=ax1, type='scatter', markersize=100, marker='*', color='#fff000'),  # New color for traderule7
         mpf.make_addplot(resampled_df['traderule8_highlight'], ax=ax1, type='scatter', markersize=100, marker='*', color='#0fff00'),  # New color for traderule8
@@ -1137,16 +1138,20 @@ def plot_resampled_chart(symbol, selected_period, resample_freq='ME'):
     
     canvas.draw()
  
+ 
 
     
 # Usage
 def plot_monthly_chart(symbol, selected_period):
+    print(f"Plotting monthly chart for {symbol}")
     plot_resampled_chart(symbol, selected_period, resample_freq='ME')
 
 def plot_weekly_chart(symbol, selected_period):
+    print(f"Plotting weekly chart for {symbol}")
     plot_resampled_chart(symbol, selected_period, resample_freq='W')
 
 def plot_daily_chart(symbol, selected_period):
+    print(f"Plotting daily chart for {symbol}")
     plot_resampled_chart(symbol, selected_period, resample_freq='D')
 
 ##############################################????????????????????????????????#############################
@@ -1205,20 +1210,36 @@ def delete_stock():
         messagebox.showwarning("Selection Error", "Please select a stock to delete.")
         
 
-def on_select(event):
-    if watchlist.curselection():
-        selected_symbol = watchlist.get(watchlist.curselection())
-        selected_period = period_var.get()
-        # fetch_data_from_db(selected_symbol, selected_period)
-        selected_timeframe = timeframe_var.get()
-        if selected_timeframe == "Daily":
-            plot_daily_chart(selected_symbol, selected_period)
-        elif selected_timeframe == "Weekly":
-            plot_weekly_chart(selected_symbol, selected_period)
-        elif selected_timeframe == "Monthly":
-            plot_monthly_chart(selected_symbol, selected_period)        
+# def on_select(event):
+#     selected_item = watchlist.focus()
+#     if selected_item:  # Check if an item is selected
+#         selected_symbol = watchlist.item(selected_item)['values'][0]  # Get the symbol from the selected item
+#         selected_period = period_var.get()
+#         selected_timeframe = timeframe_var.get()
 
+#         if selected_timeframe == "Daily":
+#             plot_daily_chart(selected_symbol, selected_period)
+#         elif selected_timeframe == "Weekly":
+#             plot_weekly_chart(selected_symbol, selected_period)
+#         elif selected_timeframe == "Monthly":
+#             plot_monthly_chart(selected_symbol, selected_period)
 
+def on_watchlist_select(event):
+    global double_click_update
+    if not double_click_update:
+        selected_item = watchlist.selection()
+        if selected_item:
+            symbol = watchlist.item(selected_item[0], "values")[0]
+            selected_period = period_var.get()
+            selected_timeframe = timeframe_var.get()
+            
+            if selected_timeframe == "Daily":
+                plot_daily_chart(symbol, selected_period)
+            elif selected_timeframe == "Weekly":
+                plot_weekly_chart(symbol, selected_period)
+            elif selected_timeframe == "Monthly":
+                plot_monthly_chart(symbol, selected_period)
+# @njit                
 async def update_traderules(symbol):
     cur.execute("""
         SELECT date, open, high, low, close, rsi3, rsi14, mamix14, mamix42, vwma25, volsma5, ma10, ma21, ma32, ma43, ma54, stochrsi14, volume, bb_percent_b,
@@ -1269,7 +1290,7 @@ async def update_traderules(symbol):
                            (df['close'] > df['open'])
 
     # Calculate traderule5
-    df['new_traderule5'] = (df['close'].gt(df['mamix14'])) & \
+    df['mamix_bo'] = (df['close'].gt(df['mamix14'])) & \
                        (df['close'].shift(1).le(df['mamix14'].shift(1))) & \
                        (df['close'].gt(df['mamix42'])) & \
                        (df['close'].shift(1).le(df['mamix42'].shift(1)))
@@ -1315,7 +1336,7 @@ async def update_traderules(symbol):
                       (df['traderule2'] != df['new_traderule2']) |
                       (df['traderule3'] != df['new_traderule3']) |
                       (df['traderule4'] != df['new_traderule4']) |
-                      (df['traderule5'] != df['new_traderule5']) |
+                      (df['traderule5'] != df['mamix_bo']) |
                       (df['traderule6'] != df['new_traderule6']) |
                       (df['traderule7'] != df['samies_morningstar']) | 
                       (df['traderule8'] != df['new_traderule8']) |
@@ -1327,7 +1348,7 @@ async def update_traderules(symbol):
                 bool(row['new_traderule2']),
                 bool(row['new_traderule3']),
                 bool(row['new_traderule4']),
-                bool(row['new_traderule5']),
+                bool(row['mamix_bo']),
                 bool(row['new_traderule6']),
                 bool(row['samies_morningstar']),
                 bool(row['new_traderule8']),
@@ -1349,7 +1370,7 @@ async def update_traderules(symbol):
 # Call the function
 # update_traderules(symbol)
 
-
+# @njit
 def format_tooltip(x, y, data):
     # Access the data for the hovered candle
     candle_data = data[x]
@@ -1358,7 +1379,7 @@ def format_tooltip(x, y, data):
 
 
 def download_histdata(start_date, end_date):
-    selected_symbol = watchlist.get(watchlist.curselection())
+    selected_symbol =  watchlist.selection()
 
     # Fetch missing data
     stock_hist_data = yf.download(selected_symbol, start=start_date, end=end_date)
@@ -1617,7 +1638,7 @@ def show_recent_signals():
     tree.heading("Rule2", text="Rule 2")
     tree.heading("Rule3", text="Rule 3")
     tree.heading("Rule4", text="Rule 4")
-    tree.heading("Rule5", text="Rule 5")
+    tree.heading("Rule5", text="MaMixBo")
     tree.heading("Rule6", text="Rule 6")
     tree.heading("Rule7", text="SaMornStar")
     tree.heading("Rule8", text="Ma54xOver")
@@ -1687,6 +1708,7 @@ def show_recent_signals():
     popup.mainloop()
     
 def on_tree_double_click(tree):
+        global double_click_update
         selected_item = tree.selection()
         if selected_item:
             item_values = tree.item(selected_item[0], "values")
@@ -1695,31 +1717,33 @@ def on_tree_double_click(tree):
             selected_timeframe = timeframe_var.get()  # Assuming you have a timeframe_var
             
             # Clear the current selection in the watchlist
-            watchlist.selection_clear(0, tk.END)
+            watchlist.selection_remove(watchlist.selection())
 
             # Find the index of the symbol in the watchlist
-            index = 0
-            while index < watchlist.size():
-                if watchlist.get(index) == symbol:
+            for i in watchlist.get_children():
+                if watchlist.item(i)['values'][0] == symbol:
                     # Select the symbol in the watchlist
-                    watchlist.selection_set(index)
+                    watchlist.selection_set(i)
                     break
-                index += 1
+            print(symbol)
+            print(selected_period)
+            print(selected_timeframe)
+            double_click_update = True 
             
-
             if selected_timeframe == "Daily":
-                plot_daily_chart(symbol, selected_period)
+                    plot_daily_chart(symbol, selected_period)
             elif selected_timeframe == "Weekly":
-                plot_weekly_chart(symbol, selected_period)
+                    plot_weekly_chart(symbol, selected_period)
             elif selected_timeframe == "Monthly":
-                plot_monthly_chart(symbol, selected_period)
-
+                    plot_monthly_chart(symbol, selected_period)
+            double_click_update = False
+        
 ############################## For Traders Dairy ############################################
 ################## Traders Dairy function ###############
 
 
 # ... (Your existing imports and database connection) ...
-
+# @njit
 def create_traders_diary_notes_popup():
     """Opens a popup for managing trader's notes for a selected stock."""
 
@@ -1789,7 +1813,7 @@ def create_traders_diary_notes_popup():
     save_button.pack()
     traders_diary_notes_create_popup.mainloop()
 
-    
+# @njit    
 def view_traders_diary_notes_popup():
         # Fetch existing notes for selected symbol from the database
         cur.execute("SELECT date, symbol, notes  FROM daily_prices WHERE notes IS NOT NULL ORDER BY date DESC")
@@ -1930,22 +1954,88 @@ sidebar = tk.Frame(root, width=250, background=BG_COLOR)
 sidebar.pack(expand=False, side='left', fill='y', anchor='nw', ipadx=5, padx=5)
 sidebar.pack_propagate(False)
 
-# Create the watchlist frame with a fixed height
-watchlist_frame = tk.Frame(sidebar, width=180, height=400, background=BG_COLOR)  # Adjust height as needed
-watchlist_frame.pack(side='top', fill='y', anchor='nw',expand=False)
-watchlist_frame.pack_propagate(False)
+# # Create the watchlist frame with a fixed height
+# watchlist_frame = tk.Frame(sidebar, width=180, height=400, background=BG_COLOR)  # Adjust height as needed
+# watchlist_frame.pack(side='top', fill='y', anchor='nw',expand=False)
+# watchlist_frame.pack_propagate(False)
 
-# Create a listbox for the watchlist
-watchlist = tk.Listbox(watchlist_frame, fg="black", font=("Nirmala UI", 10), bd=0, borderwidth=0, relief=tk.FLAT, selectborderwidth=2, selectforeground="white", selectbackground=BG_COLOR)
-watchlist.pack(side='left', expand=True, fill='y', anchor='nw', padx=5, pady=1)
+# # Create a listbox for the watchlist
+# watchlist = tk.Listbox(watchlist_frame, fg="black", font=("Nirmala UI", 10), bd=0, borderwidth=0, relief=tk.FLAT, selectborderwidth=2, selectforeground="white", selectbackground=BG_COLOR)
+# watchlist.pack(side='left', expand=True, fill='y', anchor='nw', padx=5, pady=1)
 
 
-# Add a scrollbar to the watchlist frame
-scrollbar = tk.Scrollbar(watchlist_frame, command=watchlist.yview)
-scrollbar.pack(side='right', fill='y')
+# import tkinter as tk
+# from tkinter import ttk
 
-# Configure the listbox to use the scrollbar
-watchlist.config(yscrollcommand=scrollbar.set)
+BG_COLOR = "#2c3e50"  # Example background color
+
+def create_watchlist_ui(sidebar, sidebar_bottom_frame):
+    watchlist_frame = tk.Frame(sidebar, width=180, height=400, background=BG_COLOR)
+    watchlist_frame.pack(side='top', fill='y', anchor='nw', expand=False)
+    watchlist_frame.pack_propagate(False)
+
+    # Create a treeview for the watchlist
+    watchlist = ttk.Treeview(watchlist_frame, columns=("symbol",), show="tree", selectmode="browse")
+    watchlist.heading("#0", text="", anchor="w")
+    watchlist.heading("symbol", text="Symbol", anchor="w")
+    watchlist.column("#0", width=0, stretch=tk.NO)
+    watchlist.column("symbol", width=175, anchor="w")
+    watchlist.pack(side='left', expand=True, fill='both', anchor='nw', padx=5, pady=1)
+
+    # Add a scrollbar to the watchlist frame
+    scrollbar = ttk.Scrollbar(watchlist_frame, orient="vertical", command=watchlist.yview)
+    scrollbar.pack(side='right', fill='y')
+    watchlist.configure(yscrollcommand=scrollbar.set)
+
+    # Fetch symbols from the database
+    # cur = db_connection.cursor()
+    cur.execute("SELECT symbol FROM tickers")
+    symbols = cur.fetchall()  # This will be a list of tuples
+
+    # Add items to the watchlist from the database
+    for symbol_tuple in symbols:
+        symbol = symbol_tuple[0]  # Extract the string from the tuple
+        watchlist.insert("", "end", values=(symbol,))
+
+    def search_stocks(event=None):
+        search_query = search_entry.get().lower()
+        watchlist.delete(*watchlist.get_children())  # Clear the current items
+        for symbol_tuple in symbols:
+            symbol = symbol_tuple[0]  # Extract the string from the tuple
+            if search_query in symbol.lower():
+                watchlist.insert("", "end", values=(symbol,))
+
+    stock_search_section = tk.Frame(sidebar_bottom_frame, background=BG_COLOR)
+    stock_search_section.pack(fill=tk.Y, anchor='nw')
+
+    # Create a search entry and button
+    search_entry = tk.Entry(stock_search_section, width=12)
+    search_entry.pack(side=tk.LEFT, pady=10, padx=5)
+    search_button = tk.Button(stock_search_section, text="Search", command=search_stocks)
+    search_button.pack(pady=10, padx=5, side=tk.LEFT)
+
+    # Bind the Enter key and KeyRelease event to the search_stocks method
+    search_entry.bind("<Return>", search_stocks)
+    search_entry.bind("<KeyRelease>", search_stocks)
+    watchlist.bind("<Double-1>", lambda event: on_tree_double_click(watchlist))
+    return watchlist, search_entry
+
+
+sidebar_bottom_frame = tk.Frame(sidebar, background=BG_COLOR)
+sidebar_bottom_frame.pack(side='bottom', fill='x')
+
+# db_connection = cur.conn() cur = conn.cursor()
+watchlist, search_entry = create_watchlist_ui(sidebar, sidebar_bottom_frame)
+# Bind the on_select function to the Treeview
+watchlist.bind("<<TreeviewSelect>>", on_watchlist_select)
+
+
+# # Add a scrollbar to the watchlist frame
+# scrollbar = tk.Scrollbar(watchlist_frame, command=watchlist.yview)
+# scrollbar.pack(side='right', fill='y')
+
+# # Configure the listbox to use the scrollbar
+# watchlist.config(yscrollcommand=scrollbar.set)
 
 # # Apply a custom style to the Listbox
 # style = ttk.Style()
@@ -1954,74 +2044,75 @@ watchlist.config(yscrollcommand=scrollbar.set)
 
 
 # Create the sort frame
-sort_frame = tk.Frame(sidebar, width=180, background=BG_COLOR)
-sort_frame.pack(side='top', fill='x', anchor='nw')
+# sort_frame = tk.Frame(sidebar, width=180, background=BG_COLOR)
+# sort_frame.pack(side='top', fill='x', anchor='nw')
 
-def sort_watchlist(reverse=False):
-    # Get the current watchlist items
-    watchlist_items = list(watchlist.get(0, tk.END))
+# def sort_watchlist(reverse=False):
+#     # Get the current watchlist items
+#     watchlist_items = list(watchlist.get(0, tk.END))
 
-    # Sort the watchlist items
-    watchlist_items.sort(reverse=reverse)
+#     # Sort the watchlist items
+#     watchlist_items.sort(reverse=reverse)
 
-    # Clear the current watchlist
-    watchlist.delete(0, tk.END)
+#     # Clear the current watchlist
+#     watchlist.delete(0, tk.END)
 
-    # Insert the sorted watchlist items
-    for item in watchlist_items:
-        watchlist.insert(tk.END, item)
+#     # Insert the sorted watchlist items
+#     for item in watchlist_items:
+#         watchlist.insert(tk.END, item)
 
 # Create the sort buttons
-sort_button = tk.Button(sort_frame, text="▲", width=4, command=lambda: sort_watchlist())
-sort_button.pack(side=tk.LEFT, pady=10, padx=5)
+# sort_button = tk.Button(sort_frame, text="▲", width=4, command=lambda: sort_watchlist())
+# sort_button.pack(side=tk.LEFT, pady=10, padx=5)
 
-reverse_sort_button = tk.Button(sort_frame, text="▼", width=4, command=lambda: sort_watchlist(reverse=True))
-reverse_sort_button.pack(side=tk.LEFT, pady=10, padx=5)
+# reverse_sort_button = tk.Button(sort_frame, text="▼", width=4, command=lambda: sort_watchlist(reverse=True))
+# reverse_sort_button.pack(side=tk.LEFT, pady=10, padx=5)
 
 #######################################################################
 ##########################################################################
 # frame2 = tk.Frame(top_container, width=120, height=500, bg='blue')
 # frame2.pack(side='left')
 
-# Create the third frame below
-sidebar_bottom_frame =  tk.Frame(sidebar, width=180, height=800, background=BG_COLOR)
-sidebar_bottom_frame.pack(side='top', anchor='nw')
+# # Create the third frame below
+# sidebar_bottom_frame =  tk.Frame(sidebar, width=180, height=800, background=BG_COLOR)
+# sidebar_bottom_frame.pack(side='top', anchor='nw')
 
-def search_stocks(event=None):
-    search_query = search_entry.get().lower()
-    watchlist.selection_clear(0, tk.END)  # Clear previous selection
+# def search_stocks(event=None):
+#     search_query = search_entry.get().lower()
+#     watchlist.selection_clear(0, tk.END)  # Clear previous selection
 
-    for i in range(watchlist.size()):
-        symbol = watchlist.get(i).lower()
-        if search_query in symbol:
-            watchlist.selection_set(i)  # Highlight matching items
-        else:
-            watchlist.selection_clear(i)  # Unhighlight non-matching items
+#     for i in range(watchlist.size()):
+#         symbol = watchlist.get(i).lower()
+#         if search_query in symbol:
+#             watchlist.selection_set(i)  # Highlight matching items
+#         else:
+#             watchlist.selection_clear(i)  # Unhighlight non-matching items
+
+# stock_search_section =  tk.Frame(sidebar_bottom_frame, background=BG_COLOR)
+# stock_search_section.pack(fill=tk.Y, anchor='nw')
 
 
-stock_search_section =  tk.Frame(sidebar_bottom_frame, background=BG_COLOR)
-stock_search_section.pack(fill=tk.Y, anchor='nw')
 
-# Create a search entry and button
-search_entry =  tk.Entry(stock_search_section, width=12)
-search_entry.pack(side=tk.LEFT, pady=10, padx=5)
-search_button =  tk.Button(stock_search_section, text="Search", command=search_stocks)
-search_button.pack(pady=10, padx=5, side=tk.LEFT)
-# Bind the Enter key to the search_watchlist method
-search_entry.bind("<Return>", search_stocks)
+# # Create a search entry and button
+# search_entry =  tk.Entry(stock_search_section, width=12)
+# search_entry.pack(side=tk.LEFT, pady=10, padx=5)
+# search_button =  tk.Button(stock_search_section, text="Search", command=search_stocks)
+# search_button.pack(pady=10, padx=5, side=tk.LEFT)
+# # Bind the Enter key to the search_watchlist method
+# search_entry.bind("<Return>", search_stocks)
 
 ###########################################################
 
-# Add items to the watchlist from the database
-cur.execute("SELECT symbol FROM tickers")
-symbols = cur.fetchall()
-# Sort the symbols in ascending order
-symbols.sort()
-for symbol in symbols:
-    watchlist.insert(tk.END, symbol[0])
+# # Add items to the watchlist from the database
+# cur.execute("SELECT symbol FROM tickers")
+# symbols = cur.fetchall()
+# # Sort the symbols in ascending order
+# symbols.sort()
+# for symbol in symbols:
+#     watchlist.insert(tk.END, symbol[0])
 
-# Bind the listbox selection event to the plot function
-watchlist.bind('<<ListboxSelect>>', on_select)
+# # Bind the listbox selection event to the plot function
+# watchlist.bind('<<ListboxSelect>>', on_select)
 
 
 
@@ -2116,7 +2207,7 @@ period_menu.pack(side=tk.LEFT, padx=1)
 period_menu.config(width=5)
 # Bind to period_var changes
 # With this:
-period_var.trace_add("write", lambda *args: on_select(None))
+period_var.trace_add("write", lambda *args: on_watchlist_select(None))
 
 # Add TimeFrame selection
 timeframe_var =  tk.StringVar(value='Daily')
@@ -2131,7 +2222,7 @@ timeframe_options = {
 }
 
 for option, value in timeframe_options.items():
-    button =  tk.Button(timeframe_section, text=option, command=lambda value=value: [timeframe_var.set(value), on_select(None)])
+    button =  tk.Button(timeframe_section, text=option, command=lambda value=value: [timeframe_var.set(value), on_watchlist_select(None)])
     button.pack(side=tk.LEFT, padx=5)
     
 ##################################################################################
