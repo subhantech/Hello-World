@@ -585,15 +585,15 @@ def plot_resampled_chart(symbol, selected_period, resample_freq='ME'):
     # and setting the value to NaN where the rule is not met.
     ### to plot on low of the candle .. we are collecting lows
     resampled_df['traderule1_highlight'] = np.where(resampled_df['traderule1'], resampled_df['Low'] * 0.999, np.nan)
-    resampled_df['traderule2_highlight'] = np.where(resampled_df['traderule2'], resampled_df['Low'] * 0.999, np.nan)
-    resampled_df['traderule3_highlight'] = np.where(resampled_df['traderule3'], resampled_df['Low'] * 0.999, np.nan)
-    resampled_df['traderule4_highlight'] = np.where(resampled_df['traderule4'], resampled_df['Low'] * 0.999, np.nan)
-    resampled_df['traderule5_highlight'] = np.where(resampled_df['traderule5'], resampled_df['Low'] * 0.995, np.nan)
-    resampled_df['traderule6_highlight'] = np.where(resampled_df['traderule6'], resampled_df['Low'] * 0.990, np.nan)
-    resampled_df['traderule7_highlight'] = np.where(resampled_df['traderule7'], resampled_df['Low'] * 0.985, np.nan)
-    resampled_df['traderule8_highlight'] = np.where(resampled_df['traderule8'], resampled_df['Low'] * 0.980, np.nan)
-    resampled_df['traderule9_highlight'] = np.where(resampled_df['traderule9'], resampled_df['Low'] * 0.975, np.nan)
-    resampled_df['traderule10_highlight'] = np.where(resampled_df['traderule10'], resampled_df['Low'] * 0.970, np.nan)
+    resampled_df['traderule2_highlight'] = np.where(resampled_df['traderule2'], resampled_df['Low'] * 0.995, np.nan)
+    resampled_df['traderule3_highlight'] = np.where(resampled_df['traderule3'], resampled_df['Low'] * 0.990, np.nan)
+    resampled_df['traderule4_highlight'] = np.where(resampled_df['traderule4'], resampled_df['Low'] * 0.985, np.nan)
+    resampled_df['traderule5_highlight'] = np.where(resampled_df['traderule5'], resampled_df['Low'] * 0.980, np.nan)
+    resampled_df['traderule6_highlight'] = np.where(resampled_df['traderule6'], resampled_df['Low'] * 0.975, np.nan)
+    resampled_df['traderule7_highlight'] = np.where(resampled_df['traderule7'], resampled_df['Low'] * 0.970, np.nan)
+    resampled_df['traderule8_highlight'] = np.where(resampled_df['traderule8'], resampled_df['Low'] * 0.965, np.nan)
+    resampled_df['traderule9_highlight'] = np.where(resampled_df['traderule9'], resampled_df['Low'] * 0.960, np.nan)
+    resampled_df['traderule10_highlight'] = np.where(resampled_df['traderule10'], resampled_df['Low'] * 0.955, np.nan)
     
     # resampled_df['traderule3_highlight'] = np.where(resampled_df['traderule3'], resampled_df['Low'] * 1.05, np.nan) # to add 5%
     # resampled_df['traderule3_highlight'] = np.where(resampled_df['traderule3'], resampled_df['Low'] * 0.95, np.nan) # to minus 5%
@@ -1183,32 +1183,42 @@ def add_chartink_stock():
         try:
             with open(file_path, 'r') as file:
                 stocks = file.readlines()
-                for stock in stocks:
-                    symbol = stock.strip()
-                    # Insert symbol into database
-                    cur.execute("INSERT INTO tickers (symbol) VALUES (%s) ON CONFLICT (symbol) DO NOTHING", (symbol,))
-                    conn.commit()
-                    
-                    # Check if symbol is already in watchlist before adding
-                    if symbol not in watchlist.get(0, tk.END):
-                        watchlist.insert(tk.END, symbol)
-            
+                # Remove newline characters and sort the symbols
+                sorted_stocks = sorted([stock.strip() for stock in stocks])
+                
+                # Fetch symbols from the database
+                cur.execute("SELECT symbol FROM tickers")
+                db_symbols = [symbol[0] for symbol in cur.fetchall()]
+                
+                # Add new symbols to the database
+                for symbol in sorted_stocks:
+                    if symbol not in db_symbols:
+                        cur.execute("INSERT INTO tickers (symbol) VALUES (%s) ON CONFLICT (symbol) DO NOTHING", (symbol,))
+                        conn.commit()
+                        
+                # Fetch updated symbols from the database
+                cur.execute("SELECT symbol FROM tickers")
+                symbols = [symbol[0] for symbol in cur.fetchall()]
+                
+                # Update the watchlist
+                watchlist.delete(*watchlist.get_children())  # Clear the current items
+                for symbol in symbols:
+                    watchlist.insert("", "end", values=(symbol,))
+                
             messagebox.showinfo("Success", "Stocks added to watchlist!")
         except Exception as e:
             messagebox.showerror("Error", f"Failed to read file: {e}")
-                                    
-
+            
 def delete_stock():
-    selected = watchlist.curselection()
+    selected = watchlist.selection()
     if selected:
-        symbol = watchlist.get(selected)
+        symbol = watchlist.item(selected[0], "values")[0]
         watchlist.delete(selected)
         cur.execute("DELETE FROM daily_prices WHERE symbol = %s", (symbol,))
         cur.execute("DELETE FROM tickers WHERE symbol = %s", (symbol,))
         conn.commit()
     else:
-        messagebox.showwarning("Selection Error", "Please select a stock to delete.")
-        
+        messagebox.showwarning("Selection Error", "Please select a stock to delete.")        
 
 # def on_select(event):
 #     selected_item = watchlist.focus()
@@ -1282,7 +1292,7 @@ async def update_traderules(symbol):
                            (df['rsi3'] < 60)
 
     # Calculate traderule4
-    df['new_traderule4'] = (df['close'].shift(2) < df['open'].shift(2)) & \
+    df['support_mornstar'] = (df['close'].shift(2) < df['open'].shift(2)) & \
                            (df['close'].shift(1) > df['open'].shift(1)) & \
                            (df['close'].shift(1) > ((df['close'].shift(1).abs() + df['open'].shift(1).abs()) / 2)) & \
                            (df['close'].shift(1) < ((df['close'].shift(2).abs() + df['open'].shift(2).abs()) / 2)) & \
@@ -1335,7 +1345,7 @@ async def update_traderules(symbol):
     changed_rows = df[(df['traderule1'] != df['new_traderule1']) | 
                       (df['traderule2'] != df['new_traderule2']) |
                       (df['traderule3'] != df['new_traderule3']) |
-                      (df['traderule4'] != df['new_traderule4']) |
+                      (df['traderule4'] != df['support_mornstar']) |
                       (df['traderule5'] != df['mamix_bo']) |
                       (df['traderule6'] != df['new_traderule6']) |
                       (df['traderule7'] != df['samies_morningstar']) | 
@@ -1347,7 +1357,7 @@ async def update_traderules(symbol):
     updates = [(bool(row['new_traderule1']), 
                 bool(row['new_traderule2']),
                 bool(row['new_traderule3']),
-                bool(row['new_traderule4']),
+                bool(row['support_mornstar']),
                 bool(row['mamix_bo']),
                 bool(row['new_traderule6']),
                 bool(row['samies_morningstar']),
@@ -1637,7 +1647,7 @@ def show_recent_signals():
     tree.heading("Symbol", text="Symbol")
     tree.heading("Rule2", text="Rule 2")
     tree.heading("Rule3", text="Rule 3")
-    tree.heading("Rule4", text="Rule 4")
+    tree.heading("Rule4", text="Support_Mornstar")
     tree.heading("Rule5", text="MaMixBo")
     tree.heading("Rule6", text="Rule 6")
     tree.heading("Rule7", text="SaMornStar")
@@ -1989,7 +1999,7 @@ def create_watchlist_ui(sidebar, sidebar_bottom_frame):
 
     # Fetch symbols from the database
     # cur = db_connection.cursor()
-    cur.execute("SELECT symbol FROM tickers")
+    cur.execute("SELECT symbol FROM tickers ORDER BY symbol ASC")
     symbols = cur.fetchall()  # This will be a list of tuples
 
     # Add items to the watchlist from the database
